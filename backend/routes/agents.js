@@ -67,6 +67,8 @@ function publicAgent(a) {
     lastName: a.last_name,
     firstName: a.first_name,
     idType: a.id_type,
+    city: a.city,
+    address: a.address,
     creditBalance: a.credit_balance,
     commissionEarned: a.commission_earned,
     capitalHtg: a.capital_htg,
@@ -80,9 +82,9 @@ function publicAgent(a) {
 // Filled by the user themselves, in-app — becoming an agent is an extra role on top of
 // a normal Konkou account, not a separate login system.
 export function applyAgent(userId, body) {
-  const { lastName, firstName, birthDate, idType, idNumber } = body || {};
-  if (!lastName || !firstName || !birthDate || !idType || !idNumber || !String(idNumber).trim()) {
-    return { status: 400, data: { error: "Nom, prénom, date de naissance, type et numéro de pièce d'identité requis" } };
+  const { lastName, firstName, birthDate, idType, idNumber, city, address } = body || {};
+  if (!lastName || !firstName || !birthDate || !idType || !idNumber || !String(idNumber).trim() || !city || !address) {
+    return { status: 400, data: { error: "Nom, prénom, date de naissance, type et numéro de pièce d'identité, ville et adresse requis" } };
   }
   if (!ID_TYPES.includes(idType)) {
     return { status: 400, data: { error: "Type de pièce d'identité invalide" } };
@@ -108,15 +110,15 @@ export function applyAgent(userId, body) {
     // rather than being permanently locked out. Reuses the same row/id, so their
     // agent number (see formatAgentNumber) stays the one from their first-ever application.
     db.prepare(
-      `UPDATE agents SET last_name=?, first_name=?, birth_date=?, id_type=?, id_number=?, agent_code=?,
+      `UPDATE agents SET last_name=?, first_name=?, birth_date=?, id_type=?, id_number=?, city=?, address=?, agent_code=?,
        status='pending', capital_htg=?, applied_at=datetime('now'), approved_at=NULL WHERE id=?`
-    ).run(lastName, firstName, birthDate, idType, String(idNumber).trim(), agentCode, capital, existing.id);
+    ).run(lastName, firstName, birthDate, idType, String(idNumber).trim(), city, address, agentCode, capital, existing.id);
     agentId = existing.id;
   } else {
     const info = db.prepare(
-      `INSERT INTO agents (user_id, last_name, first_name, birth_date, id_type, id_number, agent_code, capital_htg)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
-    ).run(userId, lastName, firstName, birthDate, idType, String(idNumber).trim(), agentCode, capital);
+      `INSERT INTO agents (user_id, last_name, first_name, birth_date, id_type, id_number, city, address, agent_code, capital_htg)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    ).run(userId, lastName, firstName, birthDate, idType, String(idNumber).trim(), city, address, agentCode, capital);
     agentId = info.lastInsertRowid;
   }
 
@@ -160,15 +162,15 @@ export function isAgentLinked(userId) {
 // pas être à la fois joueur et agent : c'est justement ce qui garantit qu'un numéro
 // "agent" n'a jamais accès aux fonctionnalités joueur.
 export async function registerAgent(body) {
-  const { phone, password, lastName, firstName, birthDate, idType, idNumber } = body || {};
+  const { phone, password, lastName, firstName, birthDate, idType, idNumber, city, address } = body || {};
   if (!phone || !password) {
     return { status: 400, data: { error: 'Téléphone et mot de passe requis' } };
   }
   if (String(password).length < 6) {
     return { status: 400, data: { error: 'Le mot de passe doit contenir au moins 6 caractères' } };
   }
-  if (!lastName || !firstName || !birthDate || !idType || !idNumber || !String(idNumber).trim()) {
-    return { status: 400, data: { error: "Nom, prénom, date de naissance, type et numéro de pièce d'identité requis" } };
+  if (!lastName || !firstName || !birthDate || !idType || !idNumber || !String(idNumber).trim() || !city || !address) {
+    return { status: 400, data: { error: "Nom, prénom, date de naissance, type et numéro de pièce d'identité, ville et adresse requis" } };
   }
   if (!ID_TYPES.includes(idType)) {
     return { status: 400, data: { error: "Type de pièce d'identité invalide" } };
@@ -208,14 +210,14 @@ export async function registerAgent(body) {
   const existingAgent = db.prepare('SELECT id FROM agents WHERE user_id = ?').get(userId);
   if (!existingAgent) {
     db.prepare(
-      `INSERT INTO agents (user_id, last_name, first_name, birth_date, id_type, id_number, agent_code, capital_htg)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
-    ).run(userId, lastName, firstName, birthDate, idType, String(idNumber).trim(), agentCode, capital);
+      `INSERT INTO agents (user_id, last_name, first_name, birth_date, id_type, id_number, city, address, agent_code, capital_htg)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    ).run(userId, lastName, firstName, birthDate, idType, String(idNumber).trim(), city, address, agentCode, capital);
   } else {
     db.prepare(
-      `UPDATE agents SET last_name=?, first_name=?, birth_date=?, id_type=?, id_number=?, agent_code=?,
+      `UPDATE agents SET last_name=?, first_name=?, birth_date=?, id_type=?, id_number=?, city=?, address=?, agent_code=?,
        status='pending', capital_htg=?, applied_at=datetime('now'), approved_at=NULL WHERE id=?`
-    ).run(lastName, firstName, birthDate, idType, String(idNumber).trim(), agentCode, capital, existingAgent.id);
+    ).run(lastName, firstName, birthDate, idType, String(idNumber).trim(), city, address, agentCode, capital, existingAgent.id);
   }
 
   const otp = await issueOtp(phone, 'verify_phone', 'Confirmez la création de mon compte agent Konkou.');
@@ -241,12 +243,54 @@ export function getMyAgent(userId) {
   return { status: 200, data: { agent: a ? publicAgent(a) : null } };
 }
 
+const ISO_DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+
+// Commission de l'agent, filtrable par jour — dateFilter (optionnel, 'YYYY-MM-DD') ne
+// compte que les retraits payés ce jour-là (via cashouts.commission_htg, figée au
+// paiement — voir agentPayCashout). Sans date, renvoie le total historique déjà tenu à
+// jour dans agents.commission_earned (fiable même pour des paiements antérieurs à
+// l'ajout de la colonne commission_htg). activatedDate (agent.approved_at) borne la
+// période sélectionnable côté interface : un agent ne peut consulter que depuis
+// l'activation de son propre compte, pas avant.
+export function getAgentCommissionByDay(userId, dateFilter) {
+  const agent = requireActiveAgent(userId);
+  if (!agent) return { status: 403, data: { error: 'Compte agent introuvable ou non actif' } };
+
+  const validDate = dateFilter && ISO_DATE_RE.test(dateFilter) ? dateFilter : null;
+
+  let commissionHtg, cashoutsCount;
+  if (validDate) {
+    const row = db.prepare(
+      `SELECT COALESCE(SUM(commission_htg), 0) as total, COUNT(*) as count
+       FROM cashouts WHERE agent_id = ? AND status = 'paid' AND date(processed_at) = ?`
+    ).get(agent.id, validDate);
+    commissionHtg = Math.round(row.total * 100) / 100;
+    cashoutsCount = row.count;
+  } else {
+    commissionHtg = agent.commission_earned;
+    cashoutsCount = db.prepare(
+      `SELECT COUNT(*) as count FROM cashouts WHERE agent_id = ? AND status = 'paid'`
+    ).get(agent.id).count;
+  }
+
+  return {
+    status: 200,
+    data: {
+      date: validDate,
+      activatedDate: agent.approved_at ? agent.approved_at.slice(0, 10) : null,
+      commissionHtg,
+      cashoutsCount
+    }
+  };
+}
+
 // Powers the agent picker shown to players on the deposit/cashout forms, so they choose
-// from a list instead of typing a code blind. Only exposes what's needed to recognize
-// and select an agent — not their credit balance or commission (business-sensitive).
+// from a list instead of typing a code blind. City/address are included so the player
+// knows where they're going before committing to that agent — not their credit balance
+// or commission (business-sensitive, stays out of this response).
 export function listActiveAgents() {
   const rows = db.prepare(
-    `SELECT id, agent_code, first_name, last_name FROM agents WHERE status = 'active' ORDER BY agent_code ASC`
+    `SELECT id, agent_code, first_name, last_name, city, address FROM agents WHERE status = 'active' ORDER BY agent_code ASC`
   ).all();
   return {
     status: 200,
@@ -255,7 +299,9 @@ export function listActiveAgents() {
         agentNumber: formatAgentNumber(a.id),
         agentCode: a.agent_code,
         firstName: a.first_name,
-        lastName: a.last_name
+        lastName: a.last_name,
+        city: a.city,
+        address: a.address
       }))
     }
   };
@@ -293,6 +339,11 @@ export function getAgentDashboard(userId) {
     data: {
       agentNumber: formatAgentNumber(agent.id),
       agentCode: agent.agent_code,
+      firstName: agent.first_name,
+      lastName: agent.last_name,
+      city: agent.city,
+      address: agent.address,
+      activatedDate: agent.approved_at ? agent.approved_at.slice(0, 10) : null,
       creditBalance: agent.credit_balance,
       commissionEarned: agent.commission_earned,
       commissionPercent: getAgentCommissionPercent(),
@@ -402,7 +453,10 @@ export function agentPayCashout(userId, body) {
   if (co.status !== 'pending') return { status: 409, data: { error: `Ce retrait est déjà "${co.status}"` } };
 
   const commission = Math.round(co.htg_amount * getAgentCommissionPercent() / 100 * 100) / 100;
-  db.prepare("UPDATE cashouts SET status = 'paid', processed_at = datetime('now') WHERE id = ?").run(id);
+  // commission_htg est figée ici (comme platform_fee_htg déjà ailleurs) pour que le
+  // filtre "commission par jour" de l'agent (voir getAgentCommissionByDay) reste exact
+  // même si AGENT_CASHOUT_COMMISSION_PERCENT change plus tard.
+  db.prepare("UPDATE cashouts SET status = 'paid', processed_at = datetime('now'), commission_htg = ? WHERE id = ?").run(commission, id);
   db.prepare('UPDATE agents SET commission_earned = commission_earned + ? WHERE id = ?').run(commission, agent.id);
   db.prepare('INSERT INTO transactions (user_id, type, amount, note) VALUES (?, ?, ?, ?)')
     .run(co.user_id, 'cashout_paid', 0, `Retrait payé par l'agent ${agent.agent_code} — code ${co.payout_info}`);

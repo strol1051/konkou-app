@@ -60,14 +60,21 @@ const THEMES = {
     label: '💜 Fèt Gede',
     vars: { '--blue': '#1a1a1a', '--blue-2': '#3d0a4f', '--red': '#9b30ff', '--bg': '#120a17', '--card': '#1e1224', '--card-2': '#2a1830' },
     particle: '🕯️'
+  },
+  valentin: {
+    label: '❤️ Saint-Valentin',
+    vars: { '--blue': '#7a0e2b', '--blue-2': '#c9184a', '--red': '#ff4d6d', '--bg': '#1a0a10', '--card': '#2a121c', '--card-2': '#3a1826' },
+    particle: '💕'
   }
 };
 
-function applyThemeVars(themeKey) {
+function applyThemeVars(themeKey, bgColor) {
   const theme = THEMES[themeKey] || THEMES.default;
   const root = document.documentElement.style;
   ['--blue', '--blue-2', '--red', '--bg', '--card', '--card-2'].forEach(v => root.removeProperty(v));
   Object.entries(theme.vars).forEach(([k, v]) => root.setProperty(k, v));
+  // Couleur de fond personnalisée (indépendante du thème) — surcharge --bg si définie.
+  if (bgColor) root.setProperty('--bg', bgColor);
 }
 
 function applyThemeParticles(themeKey) {
@@ -97,17 +104,101 @@ function applyThemeParticles(themeKey) {
   }
 }
 
+// Logo personnalisé — voir app.js pour la documentation complète.
+let logoUrl = 'logo.png';
+function applyLogo(url) {
+  logoUrl = url || 'logo.png';
+  document.querySelectorAll('.topbar-logo, .auth-logo-img').forEach(img => { img.src = logoUrl; });
+}
+
+// Photo de fond personnalisée — voir app.js pour la documentation complète.
+function applyBgImage(url) {
+  const body = document.body.style;
+  if (url) {
+    body.setProperty('background-image', `url('${url}')`);
+    body.setProperty('background-size', 'cover');
+    body.setProperty('background-position', 'center');
+    body.setProperty('background-attachment', 'fixed');
+    body.setProperty('background-repeat', 'no-repeat');
+  } else {
+    ['background-image', 'background-size', 'background-position', 'background-attachment', 'background-repeat']
+      .forEach(p => body.removeProperty(p));
+  }
+}
+
 async function applyThemeFromServer() {
   try {
     const res = await fetch('/api/theme');
     const data = await res.json();
-    applyThemeVars(data.theme);
+    applyThemeVars(data.theme, data.bgColor);
     applyThemeParticles(data.theme);
+    applyBgImage(data.bgImage);
+    applyLogo(data.logo);
   } catch {
     // Hors ligne ou erreur réseau : on garde les couleurs par défaut de styles.css.
   }
 }
 applyThemeFromServer();
+
+// Redimensionne/compresse une photo choisie par l'admin avant de l'envoyer au serveur —
+// une photo de téléphone fait souvent plusieurs Mo, alors que 1600px de large en JPEG
+// qualité 0.82 suffit largement pour un fond d'écran et passe confortablement sous la
+// limite de MAX_BG_IMAGE_BYTES (3 Mo) côté backend/routes/theme.js.
+function resizeImageForBg(file, maxDim = 1600, quality = 0.82) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onerror = () => reject(new Error('Lecture du fichier impossible'));
+    reader.onload = () => {
+      const img = new Image();
+      img.onerror = () => reject(new Error("Ce fichier n'est pas une image valide"));
+      img.onload = () => {
+        let { width, height } = img;
+        if (width > maxDim || height > maxDim) {
+          const scale = maxDim / Math.max(width, height);
+          width = Math.round(width * scale);
+          height = Math.round(height * scale);
+        }
+        const canvas = document.createElement('canvas');
+        canvas.width = width;
+        canvas.height = height;
+        canvas.getContext('2d').drawImage(img, 0, 0, width, height);
+        resolve(canvas.toDataURL('image/jpeg', quality));
+      };
+      img.src = reader.result;
+    };
+    reader.readAsDataURL(file);
+  });
+}
+
+// Redimensionne un logo choisi par l'admin — contrairement à resizeImageForBg (photo),
+// on garde le PNG (pas de conversion JPEG) pour préserver la transparence du fond,
+// habituelle sur un wordmark/logo. On ne recadre/force aucun ratio : juste un plafond de
+// largeur raisonnable (le format recommandé est un bandeau large et bas, environ 20:2).
+function resizeImageForLogo(file, maxDim = 1000) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onerror = () => reject(new Error('Lecture du fichier impossible'));
+    reader.onload = () => {
+      const img = new Image();
+      img.onerror = () => reject(new Error("Ce fichier n'est pas une image valide"));
+      img.onload = () => {
+        let { width, height } = img;
+        if (width > maxDim || height > maxDim) {
+          const scale = maxDim / Math.max(width, height);
+          width = Math.round(width * scale);
+          height = Math.round(height * scale);
+        }
+        const canvas = document.createElement('canvas');
+        canvas.width = width;
+        canvas.height = height;
+        canvas.getContext('2d').drawImage(img, 0, 0, width, height);
+        resolve(canvas.toDataURL('image/png'));
+      };
+      img.src = reader.result;
+    };
+    reader.readAsDataURL(file);
+  });
+}
 
 const state = {
   token: localStorage.getItem('konkou_admin_token') || null,
@@ -123,6 +214,10 @@ const state = {
   accountLookup: null,
   contactWhatsapp: null, // numéro configuré pour "Nous contacter" (null tant que non défini)
   currentTheme: 'default', // thème saisonnier actif (voir THEMES plus haut)
+  bgColor: '', // couleur de fond personnalisée ('' = pas de surcharge, fond du thème actif)
+  bgImage: '', // URL de la photo de fond personnalisée ('' = filigrane logo par défaut)
+  logo: '', // URL du logo personnalisé ('' = frontend/logo.png par défaut)
+  revenueDate: '', // date choisie pour le filtre "Revenus par jour" ('' = tout l'historique)
   error: '',
   success: '',
   loading: false
@@ -160,7 +255,7 @@ function renderLogin() {
   return `
     <div class="auth-screen">
       <div class="auth-logo">
-        <img src="logo.png" alt="Konkou" class="auth-logo-img">
+        <img src="${logoUrl}" alt="Konkou" class="auth-logo-img">
         <div class="tagline">Gestion agent/gestionnaire — retraits, vérifications, dépôts</div>
       </div>
       ${state.error ? `<div class="error-banner">${escapeHtml(state.error)}</div>` : ''}
@@ -179,7 +274,8 @@ function renderDashboard() {
   const sections = [['cashouts', '💸 Retraits'], ['verifications', '💬 Vérifications'], ['deposits', '🎟️ Dépôts'], ['agents', '🧑‍💼 Agents'], ['refills', '💳 Renflouements'], ['revenue', '📊 Revenus'], ['accounts', '🗑️ Comptes'], ['settings', '⚙️ Réglages']];
   return `
     <div class="topbar">
-      <h1>🇭🇹 Konkou — Gestion</h1>
+      <img src="${logoUrl}" alt="Konkou" class="topbar-logo">
+      <div style="color:#fff; font-size:13px; font-weight:600;">Gestion</div>
     </div>
     <div class="view">
       ${state.error ? `<div class="error-banner">${escapeHtml(state.error)}</div>` : ''}
@@ -305,6 +401,7 @@ function renderAgentsSection() {
         <h2>N° ${escapeHtml(a.agent_number)} — ${escapeHtml(a.first_name)} ${escapeHtml(a.last_name)} — ${escapeHtml(a.agent_code)}</h2>
         <p>Téléphone : ${escapeHtml(a.user_phone)} · Né(e) le ${escapeHtml(a.birth_date)}</p>
         <p>Pièce d'identité : ${escapeHtml(ID_TYPE_LABELS[a.id_type] || a.id_type)}${a.id_number ? ` — n° ${escapeHtml(a.id_number)}` : ''}</p>
+        ${(a.city || a.address) ? `<p>📍 ${[a.city, a.address].filter(Boolean).map(escapeHtml).join(' — ')}</p>` : ''}
         <p>Capital requis : <strong>${a.capital_htg} HTG</strong>${a.status === 'active' ? ` · Crédit actuel : <strong>${a.credit_balance} HTG</strong> · Commissions : <strong>${a.commission_earned} HTG</strong>` : ''}</p>
         <p style="font-size:12px;">Candidature le ${escapeHtml(a.applied_at)}${a.approved_at ? ` · Activé le ${escapeHtml(a.approved_at)}` : ''}</p>
         ${a.status === 'pending' ? `
@@ -353,9 +450,20 @@ function renderRevenueSection() {
     ['Frais de renflouement agent', b.agentRefillFees],
     ['Frais de service sur les retraits', b.cashoutServiceFees]
   ];
+  const today = new Date().toISOString().slice(0, 10);
+  const min = state.revenue.earliestDate || undefined;
   return `
     <div class="card" style="margin-top:14px;">
-      <h2>📊 Revenu total de la plateforme</h2>
+      <h2>📅 Revenus par jour</h2>
+      <p style="font-size:13px;">Choisissez une date pour voir uniquement les revenus collectés ce jour-là${min ? ` (depuis le ${min}, création du tout premier compte)` : ''}.</p>
+      <div style="display:flex; gap:10px; align-items:center;">
+        <input type="date" id="revenue-date-input" value="${escapeHtml(state.revenueDate)}" ${min ? `min="${min}"` : ''} max="${today}" style="margin-bottom:0;">
+        <button class="primary" id="revenue-date-apply-btn" type="button" style="flex:1; margin:0;">Voir ce jour</button>
+      </div>
+      ${state.revenueDate ? `<button class="secondary" id="revenue-date-reset-btn" type="button">Revenir à tout l'historique</button>` : ''}
+    </div>
+    <div class="card">
+      <h2>📊 Revenu ${state.revenue.date ? `du ${state.revenue.date}` : 'total de la plateforme (tout l\'historique)'}</h2>
       <p style="font-size:32px; font-weight:800; color:var(--text);">${state.revenue.totalRevenueHtg} HTG</p>
     </div>
     ${rows.map(([label, r]) => `
@@ -373,7 +481,7 @@ function renderAccountsSection() {
   return `
     <div class="card" style="margin-top:14px;">
       <h2>🗑️ Supprimer un compte</h2>
-      <p style="font-size:13px;">Recherchez un compte (agent ou joueur) par numéro de téléphone. La suppression est bloquée si le compte a un retrait ou dépôt en attente, ou un rôle agent actif — réglez ces éléments d'abord via les autres onglets, puis revenez ici. Un solde de points ne bloque plus la suppression : il est simplement perdu.</p>
+      <p style="font-size:13px;">Recherchez un compte (agent ou joueur) par numéro de téléphone. La suppression est bloquée si le compte a un retrait/dépôt en attente (joueur), ou — pour un agent — un dépôt, retrait ou renflouement qui lui est assigné et encore en attente ; réglez ces éléments d'abord via les autres onglets, puis revenez ici. Un solde de points, un crédit agent ou des commissions non réglées ne bloquent plus la suppression : ils sont simplement perdus/à régler en dehors de l'app.</p>
       <form id="account-lookup-form">
         <input name="phone" placeholder="Numéro de téléphone" required />
         <button class="primary" type="submit">Rechercher</button>
@@ -394,13 +502,15 @@ function accountLookupResultHtml(result) {
       <div class="stat-row"><span>Membre depuis</span><span>${escapeHtml(u.created_at)}</span></div>
       ${a ? `
         <div class="stat-row"><span>Rôle agent</span><span>${statusLabel(a.status)}</span></div>
+        ${(a.city || a.address) ? `<div class="stat-row"><span>Ville / Adresse</span><span>${[a.city, a.address].filter(Boolean).map(escapeHtml).join(' — ')}</span></div>` : ''}
         ${a.status === 'active' ? `
           <div class="stat-row"><span>Crédit agent</span><span>${a.credit_balance} HTG</span></div>
           <div class="stat-row"><span>Commissions</span><span>${a.commission_earned} HTG</span></div>
         ` : ''}
       ` : `<p style="font-size:12px; color:var(--muted);">Pas de rôle agent.</p>`}
       ${u.points > 0 ? `<p class="error-banner">⚠️ Ce compte a <strong>${u.points} points</strong> — ils seront définitivement perdus à la suppression.</p>` : ''}
-      <button class="tile" id="account-delete-btn" data-phone="${escapeHtml(u.phone)}" data-points="${u.points}" style="background:rgba(210,16,52,0.2); width:100%; margin-top:10px;">🗑️ Supprimer ce compte définitivement</button>
+      ${a && (a.credit_balance > 0 || a.commission_earned > 0) ? `<p class="error-banner">⚠️ Ce compte agent a encore <strong>${a.credit_balance} HTG</strong> de crédit et <strong>${a.commission_earned} HTG</strong> de commissions — à régler avec l'agent en dehors de l'app, ce n'est pas remboursé ni transféré automatiquement à la suppression.</p>` : ''}
+      <button class="tile" id="account-delete-btn" data-phone="${escapeHtml(u.phone)}" data-points="${u.points}" data-credit="${a ? a.credit_balance : 0}" data-commission="${a ? a.commission_earned : 0}" style="background:rgba(210,16,52,0.2); width:100%; margin-top:10px;">🗑️ Supprimer ce compte définitivement</button>
     </div>
   `;
 }
@@ -438,6 +548,38 @@ function renderSettingsSection() {
           </button>
         `).join('')}
       </div>
+    </div>
+    <div class="card">
+      <h2>🖌️ Couleur de fond personnalisée</h2>
+      <p style="font-size:13px;">Indépendante des thèmes ci-dessus — remplace uniquement la couleur de fond du thème actif, sans toucher au reste de ses couleurs ni à son décor animé. S'applique immédiatement pour tout le monde, comme les thèmes.</p>
+      <p style="font-size:13px; color:var(--muted);">
+        ${state.bgColor ? `Couleur actuelle : <strong style="color:var(--text);">${escapeHtml(state.bgColor)}</strong>` : "Aucune surcharge — l'app utilise le fond par défaut du thème actif."}
+      </p>
+      <div style="display:flex; gap:10px; align-items:center; margin-bottom:12px;">
+        <input type="color" id="bg-color-input" value="${state.bgColor || THEMES[state.currentTheme]?.vars['--bg'] || '#0b1220'}" style="width:56px; height:44px; padding:2px; margin-bottom:0; cursor:pointer;">
+        <button class="primary" id="bg-color-apply-btn" type="button" style="flex:1; margin:0;">Appliquer</button>
+      </div>
+      ${state.bgColor ? `<button class="secondary" id="bg-color-reset-btn" type="button">Réinitialiser (revenir au fond du thème)</button>` : ''}
+    </div>
+    <div class="card">
+      <h2>🖼️ Photo de fond personnalisée</h2>
+      <p style="font-size:13px;">Remplace le filigrane du logo par une photo en plein écran, indépendamment du thème et de la couleur de fond ci-dessus. L'image est automatiquement redimensionnée avant l'envoi (max 3 Mo côté serveur). S'applique immédiatement pour tout le monde.</p>
+      ${state.bgImage ? `
+        <img src="${state.bgImage}" alt="Aperçu de la photo de fond" style="width:100%; max-height:140px; object-fit:cover; border-radius:10px; margin-bottom:12px;">
+      ` : `<p style="font-size:13px; color:var(--muted);">Aucune photo — l'app affiche le filigrane du logo par défaut.</p>`}
+      <input type="file" id="bg-image-input" accept="image/png,image/jpeg,image/webp" style="margin-bottom:12px;">
+      <button class="primary" id="bg-image-apply-btn" type="button">Envoyer et appliquer</button>
+      ${state.bgImage ? `<button class="secondary" id="bg-image-reset-btn" type="button">Retirer (revenir au filigrane du logo)</button>` : ''}
+    </div>
+    <div class="card">
+      <h2>🖼️ Logo (barre du haut et écran de connexion)</h2>
+      <p style="font-size:13px;">Remplace le logo Konkou affiché en haut de l'app (joueur, agent, admin) et sur l'écran de connexion/création de compte. Format recommandé : bandeau large et bas, environ <strong>20:2</strong> (10 fois plus large que haut), comme le wordmark fourni par défaut — un autre format s'affichera mais peut paraître déformé ou trop petit selon la forme.</p>
+      <div style="background:rgba(0,0,0,0.25); border-radius:10px; padding:14px; margin-bottom:12px; display:flex; justify-content:center;">
+        <img src="${state.logo || 'logo.png'}" alt="Aperçu du logo" style="max-width:100%; max-height:60px;">
+      </div>
+      <input type="file" id="logo-input" accept="image/png,image/jpeg,image/webp" style="margin-bottom:12px;">
+      <button class="primary" id="logo-apply-btn" type="button">Envoyer et appliquer</button>
+      ${state.logo ? `<button class="secondary" id="logo-reset-btn" type="button">Réinitialiser (revenir au logo par défaut)</button>` : ''}
     </div>
   `;
 }
@@ -501,7 +643,8 @@ async function loadRefills() {
 async function loadRevenue() {
   setState({ loading: true, error: '' });
   try {
-    const data = await api('/admin/revenue');
+    const query = state.revenueDate ? `?date=${encodeURIComponent(state.revenueDate)}` : '';
+    const data = await api(`/admin/revenue${query}`);
     setState({ revenue: data, loading: false });
   } catch (err) {
     if (err.status === 401) { logout(); return; }
@@ -516,7 +659,7 @@ async function loadContactSettings() {
       api('/admin/settings/contact-whatsapp'),
       api('/admin/settings/theme')
     ]);
-    setState({ contactWhatsapp: contact.whatsappNumber, currentTheme: theme.theme, loading: false });
+    setState({ contactWhatsapp: contact.whatsappNumber, currentTheme: theme.theme, bgColor: theme.bgColor || '', bgImage: theme.bgImage || '', logo: theme.logo || '', loading: false });
   } catch (err) {
     if (err.status === 401) { logout(); return; }
     setState({ error: err.message, loading: false });
@@ -642,7 +785,7 @@ function bind() {
       const theme = btn.dataset.themePick;
       try {
         const data = await api('/admin/settings/theme', { method: 'POST', body: { theme } });
-        applyThemeVars(data.theme);
+        applyThemeVars(data.theme, state.bgColor);
         applyThemeParticles(data.theme);
         setState({ currentTheme: data.theme, success: data.message, error: '' });
       } catch (err) {
@@ -650,13 +793,117 @@ function bind() {
       }
     });
   });
+  const bgColorApplyBtn = document.getElementById('bg-color-apply-btn');
+  if (bgColorApplyBtn) {
+    bgColorApplyBtn.addEventListener('click', async () => {
+      const bgColor = document.getElementById('bg-color-input').value;
+      try {
+        const data = await api('/admin/settings/bg-color', { method: 'POST', body: { bgColor } });
+        applyThemeVars(state.currentTheme, data.bgColor);
+        setState({ bgColor: data.bgColor, success: data.message, error: '' });
+      } catch (err) {
+        setState({ error: err.message });
+      }
+    });
+  }
+  const bgColorResetBtn = document.getElementById('bg-color-reset-btn');
+  if (bgColorResetBtn) {
+    bgColorResetBtn.addEventListener('click', async () => {
+      try {
+        const data = await api('/admin/settings/bg-color', { method: 'POST', body: { bgColor: '' } });
+        applyThemeVars(state.currentTheme, '');
+        setState({ bgColor: '', success: data.message, error: '' });
+      } catch (err) {
+        setState({ error: err.message });
+      }
+    });
+  }
+  const bgImageApplyBtn = document.getElementById('bg-image-apply-btn');
+  if (bgImageApplyBtn) {
+    bgImageApplyBtn.addEventListener('click', async () => {
+      const fileInput = document.getElementById('bg-image-input');
+      const file = fileInput?.files?.[0];
+      if (!file) { setState({ error: 'Choisissez d\'abord une image.' }); return; }
+      setState({ loading: true, error: '' });
+      try {
+        const imageDataUrl = await resizeImageForBg(file);
+        const data = await api('/admin/settings/bg-image', { method: 'POST', body: { imageDataUrl } });
+        applyBgImage(data.bgImage);
+        setState({ bgImage: data.bgImage, success: data.message, error: '', loading: false });
+      } catch (err) {
+        setState({ error: err.message, loading: false });
+      }
+    });
+  }
+  const bgImageResetBtn = document.getElementById('bg-image-reset-btn');
+  if (bgImageResetBtn) {
+    bgImageResetBtn.addEventListener('click', async () => {
+      try {
+        const data = await api('/admin/settings/bg-image', { method: 'POST', body: { imageDataUrl: '' } });
+        applyBgImage('');
+        setState({ bgImage: '', success: data.message, error: '' });
+      } catch (err) {
+        setState({ error: err.message });
+      }
+    });
+  }
+  const logoApplyBtn = document.getElementById('logo-apply-btn');
+  if (logoApplyBtn) {
+    logoApplyBtn.addEventListener('click', async () => {
+      const fileInput = document.getElementById('logo-input');
+      const file = fileInput?.files?.[0];
+      if (!file) { setState({ error: 'Choisissez d\'abord une image.' }); return; }
+      setState({ loading: true, error: '' });
+      try {
+        const imageDataUrl = await resizeImageForLogo(file);
+        const data = await api('/admin/settings/logo', { method: 'POST', body: { imageDataUrl } });
+        applyLogo(data.logo);
+        setState({ logo: data.logo, success: data.message, error: '', loading: false });
+      } catch (err) {
+        setState({ error: err.message, loading: false });
+      }
+    });
+  }
+  const logoResetBtn = document.getElementById('logo-reset-btn');
+  if (logoResetBtn) {
+    logoResetBtn.addEventListener('click', async () => {
+      try {
+        const data = await api('/admin/settings/logo', { method: 'POST', body: { imageDataUrl: '' } });
+        applyLogo('');
+        setState({ logo: '', success: data.message, error: '' });
+      } catch (err) {
+        setState({ error: err.message });
+      }
+    });
+  }
+  const revenueDateApplyBtn = document.getElementById('revenue-date-apply-btn');
+  if (revenueDateApplyBtn) {
+    revenueDateApplyBtn.addEventListener('click', () => {
+      const date = document.getElementById('revenue-date-input').value;
+      if (!date) { setState({ error: 'Choisissez une date.' }); return; }
+      setState({ revenueDate: date, error: '' });
+      loadRevenue();
+    });
+  }
+  const revenueDateResetBtn = document.getElementById('revenue-date-reset-btn');
+  if (revenueDateResetBtn) {
+    revenueDateResetBtn.addEventListener('click', () => {
+      setState({ revenueDate: '', error: '' });
+      loadRevenue();
+    });
+  }
   const deleteAccountBtn = document.getElementById('account-delete-btn');
   if (deleteAccountBtn) {
     deleteAccountBtn.addEventListener('click', async () => {
       const phone = deleteAccountBtn.dataset.phone;
       const points = Number(deleteAccountBtn.dataset.points) || 0;
-      const warning = points > 0
-        ? `Supprimer définitivement le compte ${phone} ? Cette action est irréversible et ${points} points seront définitivement perdus.`
+      const credit = Number(deleteAccountBtn.dataset.credit) || 0;
+      const commission = Number(deleteAccountBtn.dataset.commission) || 0;
+      const notes = [];
+      if (points > 0) notes.push(`${points} points seront définitivement perdus`);
+      if (credit > 0 || commission > 0) notes.push(`${credit} HTG de crédit et ${commission} HTG de commissions resteront à régler avec l'agent en dehors de l'app`);
+      const warning = notes.length > 0
+        ? `Supprimer définitivement le compte ${phone} ? Cette action est irréversible et ${notes.join(', ')}.`
         : `Supprimer définitivement le compte ${phone} ? Cette action est irréversible.`;
       if (!confirm(warning)) return;
       try {

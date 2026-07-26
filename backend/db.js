@@ -11,6 +11,13 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const dbPath = process.env.DB_PATH || path.join(__dirname, 'konkou.db');
 fs.mkdirSync(path.dirname(dbPath), { recursive: true });
 
+// Dossier de données persistant — le même que celui de la base SQLite (donc sur le
+// disque persistant de Render en production, voir render.yaml). Utilisé par
+// routes/theme.js pour stocker l'image de fond personnalisée uploadée par l'admin,
+// afin qu'elle survive aux redéploiements (contrairement à frontend/, qui est
+// entièrement recréé depuis le dépôt à chaque déploiement).
+export const DATA_DIR = path.dirname(dbPath);
+
 const db = new DatabaseSync(dbPath);
 
 db.exec(`
@@ -164,7 +171,19 @@ for (const stmt of [
   "ALTER TABLE cashouts ADD COLUMN platform_fee_htg REAL NOT NULL DEFAULT 0",
   "ALTER TABLE cashouts ADD COLUMN net_payout_htg REAL NOT NULL DEFAULT 0",
   "ALTER TABLE agents ADD COLUMN last_capital_deposit_htg REAL NOT NULL DEFAULT 0",
-  "ALTER TABLE agents ADD COLUMN platform_fee_htg REAL NOT NULL DEFAULT 0"
+  "ALTER TABLE agents ADD COLUMN platform_fee_htg REAL NOT NULL DEFAULT 0",
+  // Ville/adresse du point de service de l'agent — collectées à la candidature,
+  // affichées au joueur lors du choix d'un agent pour un dépôt/retrait (voir
+  // routes/agents.js, listActiveAgents) pour qu'il sache où se rendre.
+  "ALTER TABLE agents ADD COLUMN city TEXT",
+  "ALTER TABLE agents ADD COLUMN address TEXT",
+  // Commission figée au moment du paiement du retrait (comme platform_fee_htg déjà
+  // ci-dessus) — permet un filtre "commission par jour" fiable côté agent même si
+  // AGENT_CASHOUT_COMMISSION_PERCENT change plus tard (voir routes/agents.js,
+  // getAgentCommissionByDay). Les lignes payées avant cette migration valent 0 ici —
+  // le total historique affiché à l'agent reste basé sur agents.commission_earned,
+  // qui lui a toujours été correctement incrémenté.
+  "ALTER TABLE cashouts ADD COLUMN commission_htg REAL NOT NULL DEFAULT 0"
 ]) {
   try { db.exec(stmt); } catch { /* column already exists */ }
 }

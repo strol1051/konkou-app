@@ -4,6 +4,11 @@ backend/konkou.db-journal
 backend/konkou.db-wal
 backend/konkou.db-shm
 
+# Uploads locaux (photo de fond personnalisée, voir routes/theme.js) — en local, sans
+# DB_PATH défini, ce dossier se crée à côté de konkou.db. En production ces fichiers
+# vivent sur le disque persistant Render, jamais dans ce dépôt.
+backend/uploads/
+
 # Ne jamais committer de vrais secrets — backend/.env ci-joint ne contient que des
 # valeurs de démo. En production, configurez les variables d'environnement directement
 # dans le tableau de bord Render (voir DEPLOY.md).

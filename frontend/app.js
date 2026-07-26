@@ -62,10 +62,15 @@ const THEMES = {
     label: '💜 Fèt Gede',
     vars: { '--blue': '#1a1a1a', '--blue-2': '#3d0a4f', '--red': '#9b30ff', '--bg': '#120a17', '--card': '#1e1224', '--card-2': '#2a1830' },
     particle: '🕯️'
+  },
+  valentin: {
+    label: '❤️ Saint-Valentin',
+    vars: { '--blue': '#7a0e2b', '--blue-2': '#c9184a', '--red': '#ff4d6d', '--bg': '#1a0a10', '--card': '#2a121c', '--card-2': '#3a1826' },
+    particle: '💕'
   }
 };
 
-function applyThemeVars(themeKey) {
+function applyThemeVars(themeKey, bgColor) {
   const theme = THEMES[themeKey] || THEMES.default;
   const root = document.documentElement.style;
   // Réinitialise d'abord aux valeurs par défaut (celles de :root dans styles.css) avant
@@ -73,6 +78,9 @@ function applyThemeVars(themeKey) {
   // essayé un autre thème ne restaurerait rien (les propriétés inline resteraient figées).
   ['--blue', '--blue-2', '--red', '--bg', '--card', '--card-2'].forEach(v => root.removeProperty(v));
   Object.entries(theme.vars).forEach(([k, v]) => root.setProperty(k, v));
+  // Couleur de fond personnalisée (indépendante du thème, réglée par l'admin) — surcharge
+  // le --bg du thème s'il y en a une, laisse le fond du thème sinon.
+  if (bgColor) root.setProperty('--bg', bgColor);
 }
 
 function applyThemeParticles(themeKey) {
@@ -104,12 +112,49 @@ function applyThemeParticles(themeKey) {
   }
 }
 
+// Logo affiché dans la barre du haut et l'écran de connexion — 'logo.png' par défaut
+// (fichier livré avec l'app), remplacé par l'upload de l'admin si défini (voir
+// /admin.html → Réglages). Contrairement aux couleurs/décor de thème (appliqués en
+// inline style hors du DOM re-rendu), les balises <img> sont À L'INTÉRIEUR de #app et
+// sont donc recréées à chaque render() — d'où cette variable au niveau du module,
+// référencée dans les templates (${logoUrl}) plutôt qu'une valeur codée en dur, pour que
+// chaque futur rendu utilise automatiquement la bonne valeur.
+let logoUrl = 'logo.png';
+
+// Patch direct des <img> déjà affichées (pas de re-render complet, pour ne pas perdre la
+// saisie en cours d'un formulaire) — les prochains rendus utiliseront de toute façon la
+// variable logoUrl mise à jour ci-dessus.
+function applyLogo(url) {
+  logoUrl = url || 'logo.png';
+  document.querySelectorAll('.topbar-logo, .auth-logo-img').forEach(img => { img.src = logoUrl; });
+}
+
+// Photo de fond personnalisée (voir /admin.html → Réglages) — indépendante du thème et
+// de la couleur de fond, posée en inline style sur <body> (priorité automatique sur la
+// règle CSS body{background-image:url('logo-watermark.png')...}). Vide/absente : on
+// retire les surcharges et le filigrane par défaut de styles.css reprend la main.
+function applyBgImage(url) {
+  const body = document.body.style;
+  if (url) {
+    body.setProperty('background-image', `url('${url}')`);
+    body.setProperty('background-size', 'cover');
+    body.setProperty('background-position', 'center');
+    body.setProperty('background-attachment', 'fixed');
+    body.setProperty('background-repeat', 'no-repeat');
+  } else {
+    ['background-image', 'background-size', 'background-position', 'background-attachment', 'background-repeat']
+      .forEach(p => body.removeProperty(p));
+  }
+}
+
 async function applyThemeFromServer() {
   try {
     const res = await fetch('/api/theme');
     const data = await res.json();
-    applyThemeVars(data.theme);
+    applyThemeVars(data.theme, data.bgColor);
     applyThemeParticles(data.theme);
+    applyBgImage(data.bgImage);
+    applyLogo(data.logo);
   } catch {
     // Hors ligne ou erreur réseau : on garde les couleurs par défaut de styles.css.
   }
@@ -224,6 +269,8 @@ function logout() {
   state.user = null;
   state.isAgent = false;
   state.agentScreen = 'main';
+  confirmingDeleteAccount = false; // partagé entre profil joueur et espace agent — repartir propre
+  agentCommissionDate = ''; // repartir sur "tout l'historique" à la prochaine connexion
   localStorage.removeItem('konkou_token');
   localStorage.removeItem('konkou_user');
   setState({ view: 'home', authMode: 'login', error: '', success: '' });
@@ -283,7 +330,7 @@ function render() {
 
   APP.innerHTML = `
     <div class="topbar">
-      <img src="logo.png" alt="Konkou" class="topbar-logo">
+      <img src="${logoUrl}" alt="Konkou" class="topbar-logo">
       <div class="points-pill">${state.user?.points ?? 0} pts</div>
     </div>
     <div class="view" id="view-content"></div>
@@ -314,7 +361,7 @@ function authShell(inner) {
   return `
     <div class="auth-screen">
       <div class="auth-logo">
-        <img src="logo.png" alt="Konkou" class="auth-logo-img">
+        <img src="${logoUrl}" alt="Konkou" class="auth-logo-img">
         <div class="tagline">Jouez à des jeux d'habileté. Gagnez des points. Encaissez en espèces.</div>
       </div>
       ${state.error ? `<div class="error-banner">${escapeHtml(state.error)}</div>` : ''}
@@ -380,6 +427,8 @@ function renderAgentRegisterForm() {
           <option value="permis">Permis de conduire</option>
         </select>
         <input name="idNumber" placeholder="Numéro de la pièce" required />
+        <input name="city" placeholder="Ville" required />
+        <input name="address" placeholder="Adresse (où les joueurs viendront faire leurs transactions)" required />
         <button class="primary" type="submit">Envoyer ma candidature</button>
       </form>
       <button class="link-btn" id="agent-register-back" style="margin-top:14px;">Retour à la connexion</button>
@@ -907,17 +956,41 @@ function renderWallet() {
 }
 
 // Rendered in place of a free-text agent code field, so the player picks from active
-// agents instead of having to already know/type a code correctly.
-function agentSelectHtml(agents) {
+// agents instead of having to already know/type a code correctly. selectId distinguishes
+// the cashout form's select from the deposit form's select (both call this function on
+// the same wallet screen), so each can have its own "Infos Agent" box wired independently
+// — see bindAgentSelectInfo() below.
+function agentSelectHtml(agents, selectId) {
   if (agents.length === 0) {
     return `<p class="error-banner">Aucun agent actif pour le moment — revenez plus tard.</p>`;
   }
   return `
-    <select name="agentCode" required>
+    <select name="agentCode" id="${selectId}" required>
       <option value="">Choisir un agent</option>
-      ${agents.map(a => `<option value="${escapeHtml(a.agentCode)}">${escapeHtml(a.agentCode)} — ${escapeHtml(a.firstName)} ${escapeHtml(a.lastName)} (N°${escapeHtml(a.agentNumber)})</option>`).join('')}
+      ${agents.map(a => `<option value="${escapeHtml(a.agentCode)}" data-city="${escapeHtml(a.city || '')}" data-address="${escapeHtml(a.address || '')}">${escapeHtml(a.agentCode)} — ${escapeHtml(a.firstName)} ${escapeHtml(a.lastName)} (N°${escapeHtml(a.agentNumber)})</option>`).join('')}
     </select>
+    <div id="${selectId}-info" class="card" style="display:none; padding:12px; margin-top:-2px;"></div>
   `;
+}
+
+// Met à jour l'encart "📍 Infos agent" (ville/adresse) sous le sélecteur dès que le
+// joueur choisit un agent — pour qu'il sache où se rendre avant de valider sa demande.
+function bindAgentSelectInfo(selectId) {
+  const select = document.getElementById(selectId);
+  const info = document.getElementById(`${selectId}-info`);
+  if (!select || !info) return;
+  select.addEventListener('change', () => {
+    const opt = select.selectedOptions[0];
+    const city = opt?.dataset.city;
+    const address = opt?.dataset.address;
+    if (opt && opt.value && (city || address)) {
+      info.style.display = 'block';
+      info.innerHTML = `<strong>📍 Infos agent</strong><p style="margin:6px 0 0;">${[city, address].filter(Boolean).map(escapeHtml).join(' — ')}</p>`;
+    } else {
+      info.style.display = 'none';
+      info.innerHTML = '';
+    }
+  });
 }
 
 function walletHtml(data, agents) {
@@ -964,7 +1037,7 @@ function walletHtml(data, agents) {
       }).join(' · ')}</p>
       <form id="cashout-form">
         <input name="points" type="number" placeholder="Points à retirer" min="${minCashoutPoints}" required />
-        ${agentSelectHtml(agents)}
+        ${agentSelectHtml(agents, 'cashout-agent-select')}
         <button class="primary" type="submit" ${noAgents ? 'disabled' : ''}>Générer mon code de retrait</button>
       </form>
     </div>
@@ -974,7 +1047,7 @@ function walletHtml(data, agents) {
       <p style="font-size:13px;">${escapeHtml(data.depositInfo)}</p>
       <form id="deposit-form">
         <input name="htgAmount" type="number" placeholder="Montant en HTG (${data.minDepositHtg}–${data.maxDepositHtg})" min="${data.minDepositHtg}" max="${data.maxDepositHtg}" required />
-        ${agentSelectHtml(agents)}
+        ${agentSelectHtml(agents, 'deposit-agent-select')}
         <button class="primary" type="submit" ${noAgents ? 'disabled' : ''}>Générer mon code de dépôt</button>
       </form>
     </div>
@@ -1019,6 +1092,8 @@ function depositStatusLabel(status) {
 }
 
 function bindWalletEvents() {
+  bindAgentSelectInfo('cashout-agent-select');
+  bindAgentSelectInfo('deposit-agent-select');
   const dismissBtn = document.getElementById('dismiss-code');
   if (dismissBtn) {
     dismissBtn.addEventListener('click', () => setState({ lastCashoutCode: null, lastCashoutDetails: null }));
@@ -1153,11 +1228,43 @@ function bindProfileEvents() {
 
 // ---------- ESPACE AGENT (shell entièrement séparé — voir renderAgentShell()) ----------
 let agentForceForm = false; // true after "Soumettre une nouvelle candidature" on a rejected application
+let agentCommissionDate = ''; // '' = commission totale (tout l'historique), sinon 'YYYY-MM-DD'
+
+// Bloc "Supprimer mon compte" partagé par les trois écrans agent (en attente, rejeté,
+// tableau de bord) — même schéma que profileHtml() côté joueur (confirmingDeleteAccount
+// réutilisé tel quel : un compte est soit joueur soit agent dans une session donnée,
+// jamais les deux, donc pas de conflit à partager ce drapeau). L'objet passé en
+// paramètre est soit `agent` (publicAgent, écrans en attente/rejeté) soit `dash`
+// (tableau de bord) — les deux exposent creditBalance/commissionEarned.
+function agentDeleteAccountBlock(agentOrDash) {
+  const creditBalance = agentOrDash.creditBalance || 0;
+  const commissionEarned = agentOrDash.commissionEarned || 0;
+  const parts = [];
+  if (creditBalance > 0) parts.push(`<strong>${creditBalance} HTG</strong> de crédit revendable`);
+  if (commissionEarned > 0) parts.push(`<strong>${commissionEarned} HTG</strong> de commissions`);
+  return `
+    ${confirmingDeleteAccount ? `
+      <div class="card" style="border:2px solid var(--red); margin-top:14px;">
+        <h2>⚠️ Supprimer mon compte agent</h2>
+        <p style="font-size:13px;">Action définitive et irréversible. Impossible s'il y a un dépôt, un retrait ou un renflouement qui vous est assigné et encore en attente — réglez-les d'abord depuis cet écran.</p>
+        ${parts.length > 0 ? `<p class="error-banner">Ce compte a encore ${parts.join(' et ')} — à régler avec l'administrateur en dehors de l'app, ce n'est ni remboursé ni transféré automatiquement à la suppression.</p>` : ''}
+        <p style="font-size:13px; color:var(--muted);">Votre numéro de téléphone sera libéré et pourra être utilisé pour créer un nouveau compte par la suite.</p>
+        <form id="agent-delete-account-form">
+          ${pwdField('password', 'Confirmez votre mot de passe')}
+          <button class="primary" type="submit" style="background:var(--red);">Supprimer définitivement mon compte</button>
+        </form>
+        <button class="link-btn" id="agent-cancel-delete-account" style="margin-top:10px;">Annuler</button>
+      </div>
+    ` : `
+      <button class="link-btn" id="agent-show-delete-account" style="margin-top:20px; color:var(--red);">🗑️ Supprimer mon compte</button>
+    `}
+  `;
+}
 
 function renderAgentShell() {
   return `
     <div class="topbar">
-      <img src="logo.png" alt="Konkou" class="topbar-logo">
+      <img src="${logoUrl}" alt="Konkou" class="topbar-logo">
       <div style="display:flex; gap:16px; align-items:center;">
         <button class="link-btn" id="agent-contact-btn" style="color:#fff; font-size:13px;">📞 Contact</button>
         <button class="link-btn" id="agent-logout-btn" style="color:#fff; font-size:13px;">Se déconnecter</button>
@@ -1198,8 +1305,12 @@ async function renderAgentMainAsync() {
     } else if (me.agent.status === 'rejected') {
       html = agentRejectedHtml(me.agent);
     } else {
-      const dash = await api('/agents/dashboard');
-      html = agentDashboardHtml(dash);
+      const query = agentCommissionDate ? `?date=${encodeURIComponent(agentCommissionDate)}` : '';
+      const [dash, commission] = await Promise.all([
+        api('/agents/dashboard'),
+        api(`/agents/commission-by-day${query}`)
+      ]);
+      html = agentDashboardHtml(dash, commission);
     }
     const content = document.getElementById('agent-shell-content');
     if (!content) return;
@@ -1233,6 +1344,8 @@ function agentApplyFormHtml() {
           <option value="permis">Permis de conduire</option>
         </select>
         <input name="idNumber" placeholder="Numéro de la pièce" required />
+        <input name="city" placeholder="Ville" required />
+        <input name="address" placeholder="Adresse (où les joueurs viendront faire leurs transactions)" required />
         <button class="primary" type="submit">Envoyer ma candidature</button>
       </form>
     </div>
@@ -1241,6 +1354,7 @@ function agentApplyFormHtml() {
 
 function agentPendingHtml(agent) {
   return `
+    ${state.error ? `<div class="error-banner">${escapeHtml(state.error)}</div>` : ''}
     ${state.success ? `<div class="success-banner">${escapeHtml(state.success)}</div>` : ''}
     <div class="card">
       <h2>⏳ Candidature en attente</h2>
@@ -1249,28 +1363,47 @@ function agentPendingHtml(agent) {
       <p>Déposez <strong>${agent.capitalHtg} HTG</strong> à notre bureau pour activer votre compte agent.</p>
       <p style="font-size:13px;">Nous vérifions votre pièce d'identité et confirmons la réception du dépôt avant l'activation.</p>
     </div>
+    ${agentDeleteAccountBlock(agent)}
   `;
 }
 
 function agentRejectedHtml(agent) {
   return `
+    ${state.error ? `<div class="error-banner">${escapeHtml(state.error)}</div>` : ''}
+    ${state.success ? `<div class="success-banner">${escapeHtml(state.success)}</div>` : ''}
     <div class="card">
       <h2>❌ Candidature rejetée</h2>
       <p>Votre candidature agent (code ${escapeHtml(agent.agentCode)}) a été rejetée.</p>
       <button class="secondary" id="agent-reapply">Soumettre une nouvelle candidature</button>
     </div>
+    ${agentDeleteAccountBlock(agent)}
   `;
 }
 
-function agentDashboardHtml(dash) {
+function agentDashboardHtml(dash, commission) {
+  const today = new Date().toISOString().slice(0, 10);
+  const min = dash.activatedDate || commission?.activatedDate || undefined;
   return `
     ${state.error ? `<div class="error-banner">${escapeHtml(state.error)}</div>` : ''}
     ${state.success ? `<div class="success-banner">${escapeHtml(state.success)}</div>` : ''}
     <div class="card">
-      <h2>🧑‍💼 Espace Agent — ${escapeHtml(dash.agentCode)}</h2>
-      <p>Agent N° <strong>${escapeHtml(dash.agentNumber)}</strong></p>
-      <p>Crédit disponible à revendre : <strong>${dash.creditBalance} HTG</strong></p>
-      <p>Commissions gagnées sur les retraits payés : <strong>${dash.commissionEarned} HTG</strong> (${dash.commissionPercent}% par retrait, réglé hors app)</p>
+      <h2>🧑‍💼 ${escapeHtml(dash.firstName)} ${escapeHtml(dash.lastName)}</h2>
+      <div class="stat-row"><span>Numéro agent</span><span><strong>${escapeHtml(dash.agentNumber)}</strong></span></div>
+      <div class="stat-row"><span>Code agent</span><span>${escapeHtml(dash.agentCode)}</span></div>
+      ${(dash.city || dash.address) ? `<div class="stat-row"><span>Point de service</span><span>${[dash.city, dash.address].filter(Boolean).map(escapeHtml).join(' — ')}</span></div>` : ''}
+      <div class="stat-row"><span>Balance (crédit à revendre)</span><span><strong>${dash.creditBalance} HTG</strong></span></div>
+    </div>
+    <div class="card">
+      <h2>💰 Commission sur retraits</h2>
+      <p style="font-size:13px;">Choisissez un jour pour voir la commission gagnée ce jour-là${min ? ` (depuis le ${min}, activation de votre compte)` : ''}.</p>
+      <div style="display:flex; gap:10px; align-items:center; margin-bottom:12px;">
+        <input type="date" id="agent-commission-date-input" value="${escapeHtml(agentCommissionDate)}" ${min ? `min="${min}"` : ''} max="${today}" style="margin-bottom:0;">
+        <button class="primary" id="agent-commission-date-apply-btn" type="button" style="flex:1; margin:0;">Voir ce jour</button>
+      </div>
+      ${agentCommissionDate ? `<button class="secondary" id="agent-commission-date-reset-btn" type="button">Revenir à tout l'historique</button>` : ''}
+      <p style="margin-top:16px; font-size:14px;">Commission ${commission?.date ? `du ${commission.date}` : "totale (tout l'historique)"}</p>
+      <p style="font-size:28px; font-weight:800; color:var(--text);">${commission?.commissionHtg ?? 0} HTG</p>
+      <p style="font-size:12px; color:var(--muted);">${commission?.cashoutsCount ?? 0} retrait(s) payé(s) ${commission?.date ? 'ce jour-là' : 'au total'} · ${dash.commissionPercent}% par retrait, réglé hors app.</p>
     </div>
     <div class="card">
       <h2>Dépôts à confirmer</h2>
@@ -1320,6 +1453,7 @@ function agentDashboardHtml(dash) {
         `).join('')}
       ` : ''}
     </div>
+    ${agentDeleteAccountBlock(dash)}
   `;
 }
 
@@ -1375,6 +1509,45 @@ function bindAgentEvents() {
         setState({ success: res.message, error: '' });
       } catch (err) {
         setState({ error: err.message, success: '' });
+      }
+    });
+  }
+
+  const agentCommissionApplyBtn = document.getElementById('agent-commission-date-apply-btn');
+  if (agentCommissionApplyBtn) {
+    agentCommissionApplyBtn.addEventListener('click', () => {
+      const date = document.getElementById('agent-commission-date-input').value;
+      if (!date) { setState({ error: 'Choisissez une date.' }); return; }
+      agentCommissionDate = date;
+      renderAgentMainAsync();
+    });
+  }
+  const agentCommissionResetBtn = document.getElementById('agent-commission-date-reset-btn');
+  if (agentCommissionResetBtn) {
+    agentCommissionResetBtn.addEventListener('click', () => {
+      agentCommissionDate = '';
+      renderAgentMainAsync();
+    });
+  }
+
+  const agentShowDeleteBtn = document.getElementById('agent-show-delete-account');
+  if (agentShowDeleteBtn) agentShowDeleteBtn.addEventListener('click', () => { confirmingDeleteAccount = true; setState({ error: '' }); });
+
+  const agentCancelDeleteBtn = document.getElementById('agent-cancel-delete-account');
+  if (agentCancelDeleteBtn) agentCancelDeleteBtn.addEventListener('click', () => { confirmingDeleteAccount = false; setState({ error: '' }); });
+
+  const agentDeleteForm = document.getElementById('agent-delete-account-form');
+  if (agentDeleteForm) {
+    agentDeleteForm.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const password = new FormData(e.target).get('password');
+      try {
+        const data = await api('/account/delete', { method: 'POST', body: { password } });
+        confirmingDeleteAccount = false;
+        logout();
+        setState({ success: data.message });
+      } catch (err) {
+        setState({ error: err.message });
       }
     });
   }

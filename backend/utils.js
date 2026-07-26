@@ -82,12 +82,19 @@ export function sendJson(res, status, data) {
   res.end(body);
 }
 
+// Limite du corps JSON accepté. Relevée de 1 Mo à 6 Mo pour laisser passer une image de
+// fond encodée en base64 (voir routes/theme.js, setBgImage) — le base64 ajoute ~33% par
+// rapport au fichier d'origine, et l'image elle-même est déjà limitée à MAX_BG_IMAGE_BYTES
+// (3 Mo) côté theme.js, donc 6 Mo laisse une marge confortable sans ouvrir la porte à des
+// corps de requête arbitrairement gros.
+const MAX_JSON_BODY_BYTES = 6 * 1024 * 1024;
+
 export function readJsonBody(req) {
   return new Promise((resolve, reject) => {
     let data = '';
     req.on('data', chunk => {
       data += chunk;
-      if (data.length > 1e6) req.destroy();
+      if (data.length > MAX_JSON_BODY_BYTES) req.destroy();
     });
     req.on('end', () => {
       if (!data) return resolve({});

@@ -202,7 +202,7 @@ export function listAgentApplications(statusFilter) {
   const status = ['pending', 'active', 'rejected'].includes(statusFilter) ? statusFilter : 'pending';
   const rows = db.prepare(`
     SELECT a.id, a.agent_code, a.last_name, a.first_name, a.birth_date, a.id_type, a.id_number,
-           a.status, a.credit_balance, a.commission_earned, a.capital_htg, a.applied_at, a.approved_at,
+           a.city, a.address, a.status, a.credit_balance, a.commission_earned, a.capital_htg, a.applied_at, a.approved_at,
            u.phone as user_phone
     FROM agents a
     JOIN users u ON u.id = a.user_id
@@ -311,23 +311,41 @@ export function rejectAgentRefill(body) {
 // snapshotted per-agent at approval (immune to the fee % changing later), refill and
 // cashout fees are snapshotted per-transaction the same way.
 
-export function getRevenueSummary() {
-  const agentCapitalFees = db.prepare(
-    `SELECT COALESCE(SUM(platform_fee_htg), 0) as total, COUNT(*) as count FROM agents WHERE status = 'active'`
-  ).get();
-  const agentRefillFees = db.prepare(
-    `SELECT COALESCE(SUM(platform_fee_htg), 0) as total, COUNT(*) as count FROM agent_refills WHERE status = 'confirmed'`
-  ).get();
-  const cashoutFees = db.prepare(
-    `SELECT COALESCE(SUM(platform_fee_htg), 0) as total, COUNT(*) as count FROM cashouts WHERE status = 'paid'`
-  ).get();
+const ISO_DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+
+// dateFilter (optionnel) : une date 'YYYY-MM-DD' pour ne compter que les revenus collectés
+// ce jour-là (voir "date(...)" ci-dessous, qui compare juste la partie date d'un
+// timestamp SQLite) plutôt que tout l'historique. Utilisé par /admin.html pour le
+// sélecteur "Revenus par jour" — voir aussi earliestDate, qui donne la première date
+// possible (création du tout premier compte, joueur ou agent).
+export function getRevenueSummary(dateFilter) {
+  const validDate = dateFilter && ISO_DATE_RE.test(dateFilter) ? dateFilter : null;
+
+  const agentCapitalFees = validDate
+    ? db.prepare(`SELECT COALESCE(SUM(platform_fee_htg), 0) as total, COUNT(*) as count FROM agents WHERE status = 'active' AND date(approved_at) = ?`).get(validDate)
+    : db.prepare(`SELECT COALESCE(SUM(platform_fee_htg), 0) as total, COUNT(*) as count FROM agents WHERE status = 'active'`).get();
+
+  const agentRefillFees = validDate
+    ? db.prepare(`SELECT COALESCE(SUM(platform_fee_htg), 0) as total, COUNT(*) as count FROM agent_refills WHERE status = 'confirmed' AND date(processed_at) = ?`).get(validDate)
+    : db.prepare(`SELECT COALESCE(SUM(platform_fee_htg), 0) as total, COUNT(*) as count FROM agent_refills WHERE status = 'confirmed'`).get();
+
+  const cashoutFees = validDate
+    ? db.prepare(`SELECT COALESCE(SUM(platform_fee_htg), 0) as total, COUNT(*) as count FROM cashouts WHERE status = 'paid' AND date(processed_at) = ?`).get(validDate)
+    : db.prepare(`SELECT COALESCE(SUM(platform_fee_htg), 0) as total, COUNT(*) as count FROM cashouts WHERE status = 'paid'`).get();
 
   const r2 = (n) => Math.round(n * 100) / 100;
   const totalRevenue = r2(agentCapitalFees.total + agentRefillFees.total + cashoutFees.total);
 
+  // Premier compte jamais créé (joueur ou agent, les deux vivent dans "users") — borne
+  // min du sélecteur de date côté admin, comme demandé.
+  const earliest = db.prepare('SELECT MIN(created_at) as d FROM users').get().d;
+  const earliestDate = earliest ? earliest.slice(0, 10) : null;
+
   return {
     status: 200,
     data: {
+      date: validDate, // null = tout l'historique depuis le début
+      earliestDate,
       totalRevenueHtg: totalRevenue,
       breakdown: {
         agentCapitalFees: { totalHtg: r2(agentCapitalFees.total), count: agentCapitalFees.count },

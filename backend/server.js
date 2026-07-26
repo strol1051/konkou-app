@@ -30,8 +30,29 @@ const MIME = {
   '.png': 'image/png',
   '.svg': 'image/svg+xml',
   '.ico': 'image/x-icon',
-  '.webmanifest': 'application/manifest+json'
+  '.webmanifest': 'application/manifest+json',
+  '.jpg': 'image/jpeg',
+  '.jpeg': 'image/jpeg',
+  '.webp': 'image/webp'
 };
+
+// Sert les fichiers uploadés par l'admin (ex: photo de fond, voir routes/theme.js) —
+// stockés sur le disque persistant (themeRoutes.UPLOADS_DIR), donc en dehors de
+// FRONTEND_DIR qui lui est recréé à neuf à chaque déploiement. Pas de repli SPA ici
+// (contrairement à serveStatic) : un fichier manquant est une vraie 404.
+function serveUpload(req, res, pathname) {
+  const relative = pathname.slice('/uploads/'.length);
+  const filePath = path.join(themeRoutes.UPLOADS_DIR, relative);
+  if (!filePath.startsWith(themeRoutes.UPLOADS_DIR)) {
+    res.writeHead(403); res.end('Forbidden'); return;
+  }
+  fs.readFile(filePath, (err, content) => {
+    if (err) { res.writeHead(404); res.end('Not found'); return; }
+    const ext = path.extname(filePath);
+    res.writeHead(200, { 'Content-Type': MIME[ext] || 'application/octet-stream' });
+    res.end(content);
+  });
+}
 
 function serveStatic(req, res, pathname) {
   let filePath = path.join(FRONTEND_DIR, pathname === '/' ? 'index.html' : pathname);
@@ -93,6 +114,11 @@ const server = http.createServer(async (req, res) => {
 
   if (method === 'OPTIONS') {
     sendJson(res, 200, {});
+    return;
+  }
+
+  if (pathname.startsWith('/uploads/')) {
+    serveUpload(req, res, pathname);
     return;
   }
 
@@ -226,6 +252,12 @@ const server = http.createServer(async (req, res) => {
     if (pathname === '/api/agents/dashboard' && method === 'GET') {
       const userId = requireAuth(req, res); if (userId == null) return;
       const { status, data } = agentsRoutes.getAgentDashboard(userId);
+      return sendJson(res, status, data);
+    }
+
+    if (pathname === '/api/agents/commission-by-day' && method === 'GET') {
+      const userId = requireAuth(req, res); if (userId == null) return;
+      const { status, data } = agentsRoutes.getAgentCommissionByDay(userId, url.searchParams.get('date'));
       return sendJson(res, status, data);
     }
 
@@ -401,7 +433,7 @@ const server = http.createServer(async (req, res) => {
 
     if (pathname === '/api/admin/revenue' && method === 'GET') {
       if (!requireAdmin(req, res)) return;
-      const { status, data } = adminRoutes.getRevenueSummary();
+      const { status, data } = adminRoutes.getRevenueSummary(url.searchParams.get('date'));
       return sendJson(res, status, data);
     }
 
@@ -438,6 +470,24 @@ const server = http.createServer(async (req, res) => {
     if (pathname === '/api/admin/settings/theme' && method === 'POST') {
       if (!requireAdmin(req, res)) return;
       const { status, data } = themeRoutes.setTheme(body);
+      return sendJson(res, status, data);
+    }
+
+    if (pathname === '/api/admin/settings/bg-color' && method === 'POST') {
+      if (!requireAdmin(req, res)) return;
+      const { status, data } = themeRoutes.setBgColor(body);
+      return sendJson(res, status, data);
+    }
+
+    if (pathname === '/api/admin/settings/bg-image' && method === 'POST') {
+      if (!requireAdmin(req, res)) return;
+      const { status, data } = themeRoutes.setBgImage(body);
+      return sendJson(res, status, data);
+    }
+
+    if (pathname === '/api/admin/settings/logo' && method === 'POST') {
+      if (!requireAdmin(req, res)) return;
+      const { status, data } = themeRoutes.setLogo(body);
       return sendJson(res, status, data);
     }
 
