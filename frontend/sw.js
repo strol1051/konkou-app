@@ -4,7 +4,7 @@
 // network-first pour l'app shell : on sert toujours la version la plus récente quand
 // une connexion est disponible, et on ne retombe sur le cache qu'hors-ligne.
 const CACHE_NAME = 'konkou-shell-v2';
-const SHELL_FILES = ['/', '/index.html', '/styles.css', '/app.js', '/manifest.json', '/icon.svg', '/logo.png', '/logo-watermark.png'];
+const SHELL_FILES = ['/', '/index.html', '/styles.css', '/app.js', '/manifest.json', '/icon.png', '/logo.png', '/logo-watermark.png'];
 
 self.addEventListener('install', (event) => {
   event.waitUntil(

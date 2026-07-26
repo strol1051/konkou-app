@@ -1,7 +1,0 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200">
-  <rect width="200" height="200" rx="40" fill="#00209F"/>
-  <rect y="100" width="200" height="100" rx="0" fill="#D21034"/>
-  <rect y="100" width="200" height="100" fill="#D21034"/>
-  <circle cx="100" cy="100" r="55" fill="#FFFFFF"/>
-  <text x="100" y="118" font-family="Arial, sans-serif" font-size="52" font-weight="bold" fill="#00209F" text-anchor="middle">K</text>
-</svg>
