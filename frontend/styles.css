@@ -9,6 +9,14 @@
   --muted: #93a1c4;
   --green: #22c55e;
   --radius: 16px;
+  /* Photo de fond dédiée à la barre du haut (voir applyTopbarBgImage() dans app.js/
+     admin.js) — 'none' par défaut : la barre garde alors uniquement le dégradé
+     --blue/--blue-2 du thème actif, comportement strictement identique à avant cet
+     ajout. --topbar-overlay assombrit légèrement la photo pour que le logo et les liens
+     (Contact/Se déconnecter, toujours en texte clair) restent lisibles par-dessus
+     n'importe quelle image. */
+  --topbar-bg-image: none;
+  --topbar-overlay: none;
 }
 
 * { box-sizing: border-box; }
@@ -47,7 +55,14 @@ body {
   align-items: center;
   justify-content: space-between;
   padding: 18px 20px 12px;
-  background: linear-gradient(135deg, var(--blue), var(--blue-2));
+  /* 3 couches, la première listée dessine par-dessus les suivantes : l'assombrissement
+     (--topbar-overlay), puis l'éventuelle photo (--topbar-bg-image), puis le dégradé du
+     thème actif en dernier recours (toujours visible si les deux premières sont 'none',
+     c'est-à-dire tant qu'aucune photo de barre du haut n'a été définie). */
+  background-image: var(--topbar-overlay), var(--topbar-bg-image), linear-gradient(135deg, var(--blue), var(--blue-2));
+  background-size: cover, cover, auto;
+  background-position: center, center, center;
+  background-repeat: no-repeat, no-repeat, no-repeat;
 }
 
 .topbar h1 {

@@ -491,6 +491,12 @@ const server = http.createServer(async (req, res) => {
       return sendJson(res, status, data);
     }
 
+    if (pathname === '/api/admin/settings/topbar-bg-image' && method === 'POST') {
+      if (!requireAdmin(req, res)) return;
+      const { status, data } = themeRoutes.setTopbarBgImage(body);
+      return sendJson(res, status, data);
+    }
+
     return sendJson(res, 404, { error: 'Route introuvable' });
   } catch (err) {
     console.error(err);

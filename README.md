@@ -77,23 +77,32 @@ Sur mobile, ouvrez l'URL dans Chrome puis choisissez "Ajouter à l'écran d'accu
 - Classement quotidien / hebdomadaire / général.
 - Système de parrainage : code unique par utilisateur, 50 points offerts au parrain à chaque inscription filleul.
 - **Logo** : le wordmark fourni par l'utilisateur (`frontend/logo.png`) remplace le texte "🇭🇹 Konkou" dans la barre du haut et l'écran de connexion/création de compte, côté joueur comme côté admin — remplaçable à tout moment sans redéploiement depuis *Réglages*, voir "Thème saisonnier de l'app" ci-dessous. Une version très atténuée du même logo (`frontend/logo-watermark.png`, ~9% d'opacité) est aussi affichée en filigrane, fixe au centre de l'écran, sur `<body>` — donc visible en fond sur tout l'écran (connexion, jeux, portefeuille, agent, admin) sans gêner la lecture, puisque les cartes de contenu (fond plein) passent par-dessus. L'icône PWA carrée (`frontend/icon.svg`, badge bleu/rouge avec "K") est conservée telle quelle pour l'écran d'accueil du téléphone, le wordmark n'étant pas au bon format (large et bas) pour une icône carrée.
-- **Thème saisonnier de l'app, contrôlé par l'admin** : 7 thèmes disponibles (Défaut, Noël, Nouvel An, Été, Pâques, Fèt Gede, Saint-Valentin) changeant à la fois les couleurs de l'app et une décoration animée (flocons, confettis, cœurs, etc.), plus une couleur de fond et une photo de fond personnalisables indépendamment de ces thèmes — voir "Thème saisonnier de l'app" ci-dessous.
+- **Thème saisonnier de l'app, contrôlé par l'admin** : 8 thèmes disponibles (Défaut, Noël, Nouvel An, Été, Pâques, Fèt Gede, Saint-Valentin, Rentrée des classes) changeant à la fois les couleurs de l'app, une décoration animée (flocons, confettis, cœurs, etc.) et, pour 6 d'entre eux, un mélange de questions de quiz sur le thème (voir "Questions saisonnières" ci-dessous), plus une couleur de fond et une photo de fond personnalisables indépendamment de ces thèmes — voir "Thème saisonnier de l'app" ci-dessous.
 - **Nombre de parties restantes affiché en jeu** : l'écran de quiz et de sprint de calcul affiche désormais "🎮 Parties gratuites restantes aujourd'hui : N" pendant la partie, à partir de la même valeur déjà calculée côté serveur (`remainingPlaysToday`).
 
 Toutes ces fonctionnalités ont été testées de bout en bout (inscription, jeu, gain de points, retrait avec plafond quotidien, dépôt et parties bonus, parrainage, confirmation WhatsApp, réinitialisation de mot de passe, candidature agent avec vérification d'âge et génération de code, approbation agent créditant le bon montant, dépôt/retrait routés vers un agent précis, crédit insuffisant refusé, rejets d'authentification invalide, reprise d'une inscription abandonnée sur le même numéro).
 
 ## Mettre à jour la banque de questions
 
-`backend/data/questions.json` contient 100 questions (une dizaine sur Haïti, le reste en culture générale mondiale : géographie, histoire, sciences, sport, arts, mathématiques). C'est un simple fichier JSON, rechargé à chaque démarrage du serveur — pour le renouveler :
+`backend/data/questions.json` contient 160 questions : 100 questions générales (une dizaine sur Haïti, le reste en culture générale mondiale : géographie, histoire, sciences, sport, arts, mathématiques) + 60 questions saisonnières réparties en 6 thèmes de 10 questions chacun (Noël, Été, Pâques, Saint-Valentin, Nouvel An, Rentrée des classes — voir "Questions saisonnières" ci-dessous). C'est un simple fichier JSON, rechargé à chaque démarrage du serveur — pour le renouveler :
 
 1. Éditez `backend/data/questions.json` directement (ajoutez, retirez ou remplacez des entrées). Chaque question suit ce format :
    ```json
-   { "id": 101, "question": "...", "choices": ["...", "...", "...", "..."], "answer": 0 }
+   { "id": 201, "question": "...", "choices": ["...", "...", "...", "..."], "answer": 0 }
    ```
-   `answer` est l'index (0 à 3) de la bonne réponse dans `choices`. Les `id` doivent rester uniques.
+   `answer` est l'index (0 à 3) de la bonne réponse dans `choices`. Les `id` doivent rester uniques. Un champ `"theme"` optionnel (ex. `"theme": "noel"`) rend la question saisonnière — voir ci-dessous ; son absence en fait une question générale, toujours piochable.
 2. Redémarrez le serveur (`node server.js`) pour que les changements prennent effet — ou lancez-le avec `node --watch server.js` en développement pour un rechargement automatique.
 
-Chaque partie de quiz tire 5 questions au hasard dans tout le fichier, donc plus la banque est grande, moins un joueur assidu revoit les mêmes questions.
+Chaque partie de quiz tire 5 questions au hasard dans le pool actif (voir ci-dessous), donc plus la banque est grande, moins un joueur assidu revoit les mêmes questions.
+
+### Questions saisonnières
+
+Une question peut être taguée avec un champ `"theme"` correspondant à une des clés de thème saisonnier de l'app (`noel`, `ete`, `paques`, `valentin`, `nouvel_an`, `rentree` — voir "Thème saisonnier de l'app" plus bas pour la liste complète des 8 thèmes ; `gede` et `default` n'ont pas encore de questions dédiées, rien n'empêche d'en ajouter de la même façon). Le pool de tirage d'une partie de quiz (`routes/games.js`, fonction `questionPool()`) est composé ainsi :
+
+- **Toutes les questions générales** (sans champ `theme`) sont toujours piochables, quel que soit le thème actif.
+- **Les questions saisonnières** ne rejoignent le pool que lorsque leur thème est le thème actif de l'app (celui choisi par vous dans `/admin.html` → *Réglages*).
+
+Concrètement, si vous activez le thème "Noël" en décembre, les joueurs voient un mélange des 100 questions générales et des 10 questions de Noël — jamais les questions d'un autre thème (Pâques, Valentin...), et jamais uniquement les questions de Noël non plus : les questions saisonnières s'ajoutent au pool général, elles ne le remplacent pas. Dès que vous repassez sur le thème "Défaut" (ou un autre thème sans rapport), les questions de Noël redeviennent invisibles jusqu'à la prochaine fois. Comme les 100 questions générales, ce mécanisme ne demande aucune action ponctuelle de votre part au-delà du choix du thème déjà fait dans *Réglages* — pas de bouton ou de réglage séparé pour les questions.
 
 ## Mise sur sa performance
 
@@ -213,7 +222,7 @@ Rien dans l'architecture actuelle n'a besoin d'être réécrit pour ça — le r
 
 ## Thème saisonnier de l'app
 
-Dans `/admin.html`, onglet *Réglages*, une carte "🎨 Thème de l'app" propose 7 options en tuiles cliquables, chacune avec un aperçu de ses couleurs :
+Dans `/admin.html`, onglet *Réglages*, une carte "🎨 Thème de l'app" propose 8 options en tuiles cliquables, chacune avec un aperçu de ses couleurs :
 
 - **Défaut** 🇭🇹 : les couleurs bleu/rouge habituelles de Konkou, sans décoration.
 - **Noël** 🎄 : rouge/vert profond, décor de flocons de neige qui dérivent lentement de haut en bas de l'écran.
@@ -222,10 +231,11 @@ Dans `/admin.html`, onglet *Réglages*, une carte "🎨 Thème de l'app" propose
 - **Pâques** 🐣 : violet/rose pastel, décor de fleurs.
 - **Fèt Gede** 💜 : violet/noir/blanc — les couleurs traditionnelles de la fête haïtienne du 1er/2 novembre honorant les ancêtres dans la tradition vodou —, décor de bougies. Choisi plutôt qu'une imagerie plus littérale (crâne, etc.) pour rester dans un registre festif/culturel respectueux plutôt que caricatural ; n'hésitez pas à demander un ajustement si ce choix ne correspond pas à ce que vous aviez en tête.
 - **Saint-Valentin** ❤️ : rouge/rose, décor de cœurs.
+- **Rentrée des classes** 🎒 : vert tableau/jaune crayon, décor de crayons. Ajouté en même temps que les questions saisonnières (voir "Questions saisonnières" plus haut) pour couvrir la période de rentrée scolaire, qui n'avait pas encore de thème visuel dédié.
 
-Cliquer sur une tuile applique le thème **immédiatement pour tous les joueurs et agents**, dès leur prochain chargement de page (pas besoin de redéployer). Techniquement : la clé du thème choisi est stockée dans la même table `settings` que le numéro WhatsApp de contact ; `GET /api/theme` (public, lu par `app.js` et `admin.js` avant même une éventuelle connexion) renvoie cette clé, et chaque thème (couleurs + décor) est défini côté frontend uniquement, dans un objet `THEMES` dupliqué à l'identique dans `app.js` et `admin.js`. Les couleurs remplacent des variables CSS (`--blue`, `--blue-2`, `--red`, `--bg`, `--card`, `--card-2`) — le vert, le texte et le gris restent constants dans tous les thèmes pour garder une lisibilité identique (succès/erreur toujours reconnaissables). Le décor animé est un calque plein écran, non cliquable, peint derrière le contenu de l'app (visible seulement dans les espaces transparents entre les cartes), sur le même principe que le filigrane du logo.
+Cliquer sur une tuile applique le thème **immédiatement pour tous les joueurs et agents**, dès leur prochain chargement de page (pas besoin de redéployer) — et, depuis l'ajout des questions saisonnières, change aussi automatiquement le mélange de questions du quiz si des questions sont taguées pour ce thème (voir "Questions saisonnières" plus haut). Techniquement : la clé du thème choisi est stockée dans la même table `settings` que le numéro WhatsApp de contact ; `GET /api/theme` (public, lu par `app.js` et `admin.js` avant même une éventuelle connexion) renvoie cette clé, et chaque thème (couleurs + décor) est défini côté frontend uniquement, dans un objet `THEMES` dupliqué à l'identique dans `app.js` et `admin.js`. Les couleurs remplacent des variables CSS (`--blue`, `--blue-2`, `--red`, `--bg`, `--card`, `--card-2`) — le vert, le texte et le gris restent constants dans tous les thèmes pour garder une lisibilité identique (succès/erreur toujours reconnaissables). Le décor animé est un calque plein écran, non cliquable, peint derrière le contenu de l'app (visible seulement dans les espaces transparents entre les cartes), sur le même principe que le filigrane du logo.
 
-Pour ajouter un nouveau thème plus tard : ajouter une entrée dans l'objet `THEMES` (`frontend/app.js` **et** `frontend/admin.js`, à garder synchronisés) et sa clé dans la liste `THEME_KEYS` de `backend/routes/theme.js` (validation côté serveur).
+Pour ajouter un nouveau thème plus tard : ajouter une entrée dans l'objet `THEMES` (`frontend/app.js` **et** `frontend/admin.js`, à garder synchronisés) et sa clé dans la liste `THEME_KEYS` de `backend/routes/theme.js` (validation côté serveur) — et, si vous voulez des questions dédiées, leur ajouter le champ `"theme"` correspondant dans `questions.json` (voir "Questions saisonnières" plus haut).
 
 **Couleur de fond personnalisée, en plus des thèmes.** Sous la carte des thèmes, une deuxième carte "🖌️ Couleur de fond personnalisée" permet de choisir n'importe quelle couleur (sélecteur de couleur natif) et de l'appliquer par-dessus le thème actif — elle ne remplace que le fond (`--bg`), pas les autres couleurs ni le décor animé du thème. Utile pour garder par exemple le décor de Noël avec un fond différent. Un bouton "Réinitialiser" revient au fond par défaut du thème actif. Techniquement : stockée dans `settings` sous la clé `app_bg_color` (chaîne vide = pas de surcharge), validée côté serveur au format hexadécimal (`#rrggbb`), renvoyée par `GET /api/theme` en plus de la clé du thème, modifiable via `POST /api/admin/settings/bg-color`.
 
@@ -236,6 +246,10 @@ Techniquement, pas de librairie d'upload (`multer` ou équivalent) : le fichier 
 **Important : stockage sur le disque persistant, pas dans le dépôt.** L'image est écrite dans le même dossier que la base SQLite (`DATA_DIR`, à côté de `DB_PATH` — voir `render.yaml`, qui attache un disque persistant Render à `/var/data`), et non dans `frontend/`, qui est entièrement recréé depuis le dépôt à chaque déploiement et perdrait donc le fichier. Le serveur sert ces images via une route dédiée (`/uploads/*`, dans `server.js`) qui pointe vers ce dossier persistant. Conséquence pratique : la photo de fond survit aux redéploiements, exactement comme les comptes et les points des joueurs.
 
 **Logo personnalisé, dans la barre du haut et l'écran de connexion.** Une quatrième carte "🖼️ Logo (barre du haut et écran de connexion)" permet de remplacer le wordmark `frontend/logo.png` sans redéployer — affiché dans la barre du haut (joueur, agent, admin) et sur l'écran de connexion/création de compte. **Format recommandé : environ 20:2** (un bandeau 10 fois plus large que haut, comme le wordmark fourni par défaut) — non strictement imposé, un autre ratio s'affiche quand même mais peut paraître déformé ou trop petit selon le gabarit choisi par le CSS (`.topbar-logo`/`.auth-logo-img`). Contrairement à la photo de fond (convertie en JPEG), le logo est gardé en PNG côté navigateur pour préserver un éventuel fond transparent, habituel sur un wordmark. Même mécanisme technique que la photo de fond (upload en base64, stockage sur le disque persistant, route `POST /api/admin/settings/logo`, max 2 Mo décodés) — voir plus haut pour le détail. Un bouton "Réinitialiser" revient au fichier `logo.png` livré avec l'app.
+
+⚠️ **À ne pas confondre avec la carte suivante** : cette carte "Logo" remplace le wordmark lui-même (le mot "Konkou" affiché) — si vous y uploadez une photo (un paysage, par exemple), c'est le logo entier qui disparaît, remplacé par cette photo. Pour ajouter une photo **derrière** le logo, sans le faire disparaître, utilisez la carte "Photo de fond de la barre du haut" ci-dessous.
+
+**Photo de fond de la barre du haut, en plus du logo.** Une cinquième carte "🖼️ Photo de fond de la barre du haut" ajoute une photo dans le rectangle de la barre du haut, derrière le logo — indépendamment à la fois du logo (carte précédente) et de la photo de fond de toute l'app (deux cartes plus haut) : les trois coexistent sans se remplacer. Le logo et les liens (Contact/Se déconnecter) restent affichés par-dessus la photo, avec un léger assombrissement automatique pour rester lisibles sur n'importe quelle image. Techniquement : même mécanisme d'upload que les autres photos (base64, disque persistant, `POST /api/admin/settings/topbar-bg-image`, max 3 Mo décodés), mais posée comme variable CSS sur `:root` (`--topbar-bg-image`/`--topbar-overlay` dans `styles.css`) plutôt qu'un style inline sur un élément précis — ainsi elle s'applique à la barre du haut où qu'elle soit re-rendue dans l'app (joueur, agent, admin), sans code de "patch" supplémentaire à chaque écran. Sans photo ici, la barre garde simplement le dégradé de couleurs du thème actif, comportement identique à avant cet ajout. Un bouton "Retirer" revient à ce dégradé.
 
 ## Ce qu'il reste à faire avant un vrai lancement commercial
 
@@ -346,6 +360,17 @@ Testé de bout en bout : suppression d'un compte agent actif avec un dépôt ass
 
 Testé de bout en bout via curl : inscription (dédiée et candidature) refusée sans ville/adresse (400) et acceptée avec ; `GET /api/agents/list` exposant bien la ville/adresse à un joueur ; tableau de bord agent renvoyant nom/prénom/ville/adresse/date d'activation ; commission par jour sur un retrait payé le jour même (montant correct), sur un jour sans activité (0 HTG), et avec une date invalide (repli sur le total cumulé) ; affichage ville/adresse confirmé côté admin, tant sur les candidatures que sur la recherche de compte.
 
+**Questions de quiz saisonnières + 8e thème "Rentrée des classes" (juillet 2026).** Deux ajouts liés, voir "Questions saisonnières" et "Thème saisonnier de l'app" plus haut pour le détail complet :
+- 60 nouvelles questions ajoutées à `questions.json` (100 → 160), réparties en 6 thèmes de 10 questions chacun : Noël, Été, Pâques, Saint-Valentin, Nouvel An, Rentrée des classes. Chacune porte un champ `"theme"` optionnel ; les 100 questions générales existantes n'en ont pas et restent toujours piochables.
+- `routes/games.js` compose désormais le pool de tirage du quiz à partir du thème saisonnier actif (`routes/theme.js`, nouvelle fonction `getActiveThemeKey()`) : questions générales + questions du thème actif uniquement — les questions d'un autre thème restent invisibles. Ce comportement suit directement le thème déjà choisi par vous dans *Réglages*, sans réglage séparé à gérer pour les questions.
+- Nouveau 8e thème visuel **Rentrée des classes** 🎒 (vert tableau/jaune crayon, décor de crayons), ajouté car cette période n'avait pas encore de thème alors qu'elle a désormais ses propres questions.
+
+Testé de bout en bout via curl : 160 questions validées programmatiquement (ids uniques, 4 choix, réponse valide, 10 questions par thème, 100 questions générales) ; sur le thème "Défaut", 40 tirages successifs (200 questions) ne renvoient que des questions générales ; sur le thème "Noël" actif, 60 tirages font apparaître des questions de Noël mélangées aux questions générales, sans qu'aucune question d'un autre thème (Été, Pâques...) n'apparaisse ; le thème "Rentrée des classes" est accepté et persisté comme les 7 thèmes existants.
+
+**Photo de fond dédiée à la barre du haut (juillet 2026).** Remontée après un test : uploader une photo dans la carte "Logo" la remplaçait entièrement (le mot "Konkou" disparaissait), alors que l'intention était d'ajouter une photo *derrière* le logo, pas de le remplacer. Nouvelle carte "🖼️ Photo de fond de la barre du haut" dans *Réglages*, indépendante du logo et de la photo de fond de toute l'app — voir "Photo de fond de la barre du haut, en plus du logo" plus haut pour le détail complet, y compris le choix technique (variables CSS sur `:root` plutôt qu'un style inline, pour survivre à n'importe quel re-rendu de la barre).
+
+Testé de bout en bout via curl : `GET /api/theme` renvoie bien `topbarBgImage` (vide sur une base neuve, coexiste avec `bgImage` et `logo` déjà définis) ; accès sans jeton admin bloqué (401) ; format non-image rejeté (400) ; upload PNG valide accepté (200) et re-servi avec le bon `Content-Type` via `/uploads/...` ; un nouvel upload supprime bien l'ancien fichier (pas d'accumulation) ; la réinitialisation (`imageDataUrl` vide) vide bien le réglage et le dossier.
+
 ## Structure du projet
 
 ```
@@ -358,7 +383,7 @@ konkou-app/
 │   ├── sms.js                # point d'intégration pour un futur fournisseur SMS réel (non branché actuellement)
 │   ├── middleware/auth.js  # extraction de l'utilisateur (et de l'admin) depuis le jeton
 │   ├── routes/              # auth, jeux, portefeuille, dépôts, agents, compte (suppression), classement, profil, admin (retraits/vérifications/dépôts/agents/renflouements/revenus/comptes)
-│   └── data/questions.json # banque de 100 questions du quiz (voir "Mettre à jour la banque de questions")
+│   └── data/questions.json # banque de 160 questions du quiz : 100 générales + 60 saisonnières (voir "Mettre à jour la banque de questions")
 └── frontend/
     ├── index.html, app.js, styles.css   # app joueur
     ├── admin.html, admin.js              # interface agent/gestionnaire (retraits, vérifications WhatsApp, dépôts, candidatures agent, renflouements, revenus)

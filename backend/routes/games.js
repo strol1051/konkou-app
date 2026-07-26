@@ -3,9 +3,22 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import db from '../db.js';
+import { getActiveThemeKey } from './theme.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const allQuestions = JSON.parse(fs.readFileSync(path.join(__dirname, '../data/questions.json'), 'utf-8'));
+
+// Questions saisonnières (voir "Banque de questions" dans README.md) : une question sans
+// champ "theme" est générale et toujours piochable ; une question avec un "theme" (ex.
+// "noel") ne rejoint le pool que lorsque ce thème est le thème actif de l'app (choisi par
+// l'admin dans /admin.html → Réglages — voir routes/theme.js). Les questions saisonnières
+// s'ajoutent donc au pool général sans jamais le remplacer : un joueur voit toujours
+// principalement des questions générales, avec quelques questions de saison mélangées
+// dedans pendant la période concernée.
+function questionPool() {
+  const activeTheme = getActiveThemeKey();
+  return allQuestions.filter(q => !q.theme || q.theme === activeTheme);
+}
 
 const activeSessions = new Map(); // sessionToken -> { userId, gameType, correctAnswers, createdAt }
 const DAILY_LIMIT = 30;
@@ -95,7 +108,7 @@ export function getTrivia(userId, rawStake) {
   const stakeCheck = validateStake(rawStake, userId);
   if (stakeCheck.error) return { status: 400, data: { error: stakeCheck.error } };
 
-  const picked = shuffle(allQuestions).slice(0, 5);
+  const picked = shuffle(questionPool()).slice(0, 5);
   const sessionToken = crypto.randomBytes(12).toString('hex');
   activeSessions.set(sessionToken, {
     userId, gameType: 'trivia', correctAnswers: picked.map(q => q.answer),

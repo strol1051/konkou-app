@@ -6,6 +6,7 @@ import { DATA_DIR } from '../db.js';
 const SETTING_KEY = 'app_theme';
 const BG_SETTING_KEY = 'app_bg_color';
 const BG_IMAGE_SETTING_KEY = 'app_bg_image';
+const TOPBAR_BG_IMAGE_SETTING_KEY = 'app_topbar_bg_image';
 const LOGO_SETTING_KEY = 'app_logo';
 const DEFAULT_THEME = 'default';
 
@@ -13,7 +14,7 @@ const DEFAULT_THEME = 'default';
 // (app.js/admin.js) — le serveur ne fait que stocker/valider la clé choisie, pour éviter
 // de dupliquer des valeurs de couleur des deux côtés. Garder cette liste synchronisée
 // avec l'objet THEMES du frontend si un thème est ajouté/retiré.
-const THEME_KEYS = ['default', 'noel', 'nouvel_an', 'ete', 'paques', 'gede', 'valentin'];
+const THEME_KEYS = ['default', 'noel', 'nouvel_an', 'ete', 'paques', 'gede', 'valentin', 'rentree'];
 
 const HEX_COLOR_RE = /^#[0-9a-fA-F]{6}$/;
 
@@ -80,6 +81,7 @@ export function getTheme() {
       theme: getSetting(SETTING_KEY, DEFAULT_THEME),
       bgColor: getSetting(BG_SETTING_KEY, ''), // '' = pas de surcharge, on garde le fond du thème
       bgImage: getSetting(BG_IMAGE_SETTING_KEY, ''), // '' = pas de photo de fond personnalisée
+      topbarBgImage: getSetting(TOPBAR_BG_IMAGE_SETTING_KEY, ''), // '' = pas de photo dans la barre du haut, juste le dégradé du thème
       logo: getSetting(LOGO_SETTING_KEY, '') // '' = logo.png par défaut (fichier livré avec l'app)
     }
   };
@@ -92,6 +94,16 @@ export function setTheme(body) {
   }
   setSetting(SETTING_KEY, theme);
   return { status: 200, data: { message: 'Thème mis à jour.', theme } };
+}
+
+// Lu par routes/games.js pour composer le pool de questions du quiz (voir "Banque de
+// questions" dans README.md) : les questions taggées d'un thème ne sont piochées que
+// quand ce thème est actif, en plus des questions générales (jamais filtrées). N'importe
+// quel autre module backend qui aurait besoin du thème actif (sans les champs bgColor/
+// bgImage/logo de getTheme()) devrait aussi passer par ici plutôt que relire le setting
+// directement, pour garder la clé de setting encapsulée dans ce fichier.
+export function getActiveThemeKey() {
+  return getSetting(SETTING_KEY, DEFAULT_THEME);
 }
 
 // Couleur de fond personnalisée, indépendante du thème saisonnier — un admin peut la
@@ -123,6 +135,24 @@ export function setBgImage(body) {
   return {
     status: 200,
     data: { message: result.url ? 'Photo de fond mise à jour.' : 'Photo de fond retirée.', bgImage: result.url }
+  };
+}
+
+// Photo de fond DÉDIÉE à la barre du haut (le rectangle avec le logo et les liens
+// Contact/Se déconnecter) — indépendante à la fois du logo lui-même et de la photo de
+// fond de toute l'app (setBgImage ci-dessus) : les trois se superposent sans se
+// remplacer. Un body vide/absent ({} ou {imageDataUrl:''}) retire la photo et revient au
+// simple dégradé de couleurs du thème actif.
+export function setTopbarBgImage(body) {
+  const result = saveUploadedImage(body?.imageDataUrl ?? '', {
+    settingKey: TOPBAR_BG_IMAGE_SETTING_KEY,
+    filenamePrefix: 'topbar-bg-custom',
+    maxBytes: 3 * 1024 * 1024 // 3 Mo décodés — même limite que la photo de fond générale
+  });
+  if (result.error) return { status: result.status, data: { error: result.error } };
+  return {
+    status: 200,
+    data: { message: result.url ? 'Photo de la barre du haut mise à jour.' : 'Photo de la barre du haut retirée.', topbarBgImage: result.url }
   };
 }
 

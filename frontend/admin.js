@@ -65,6 +65,11 @@ const THEMES = {
     label: '❤️ Saint-Valentin',
     vars: { '--blue': '#7a0e2b', '--blue-2': '#c9184a', '--red': '#ff4d6d', '--bg': '#1a0a10', '--card': '#2a121c', '--card-2': '#3a1826' },
     particle: '💕'
+  },
+  rentree: {
+    label: '🎒 Rentrée des classes',
+    vars: { '--blue': '#0f4c3a', '--blue-2': '#1b6a4f', '--red': '#ffb703', '--bg': '#0a1f18', '--card': '#123527', '--card-2': '#1a4432' },
+    particle: '✏️'
   }
 };
 
@@ -126,6 +131,18 @@ function applyBgImage(url) {
   }
 }
 
+// Photo de fond DÉDIÉE à la barre du haut — voir app.js pour la documentation complète.
+function applyTopbarBgImage(url) {
+  const root = document.documentElement.style;
+  if (url) {
+    root.setProperty('--topbar-bg-image', `url('${url}')`);
+    root.setProperty('--topbar-overlay', 'linear-gradient(rgba(0,0,0,0.35), rgba(0,0,0,0.35))');
+  } else {
+    root.setProperty('--topbar-bg-image', 'none');
+    root.setProperty('--topbar-overlay', 'none');
+  }
+}
+
 async function applyThemeFromServer() {
   try {
     const res = await fetch('/api/theme');
@@ -133,6 +150,7 @@ async function applyThemeFromServer() {
     applyThemeVars(data.theme, data.bgColor);
     applyThemeParticles(data.theme);
     applyBgImage(data.bgImage);
+    applyTopbarBgImage(data.topbarBgImage);
     applyLogo(data.logo);
   } catch {
     // Hors ligne ou erreur réseau : on garde les couleurs par défaut de styles.css.
@@ -216,6 +234,7 @@ const state = {
   currentTheme: 'default', // thème saisonnier actif (voir THEMES plus haut)
   bgColor: '', // couleur de fond personnalisée ('' = pas de surcharge, fond du thème actif)
   bgImage: '', // URL de la photo de fond personnalisée ('' = filigrane logo par défaut)
+  topbarBgImage: '', // URL de la photo dédiée à la barre du haut ('' = dégradé du thème actif)
   logo: '', // URL du logo personnalisé ('' = frontend/logo.png par défaut)
   revenueDate: '', // date choisie pour le filtre "Revenus par jour" ('' = tout l'historique)
   error: '',
@@ -581,6 +600,16 @@ function renderSettingsSection() {
       <button class="primary" id="logo-apply-btn" type="button">Envoyer et appliquer</button>
       ${state.logo ? `<button class="secondary" id="logo-reset-btn" type="button">Réinitialiser (revenir au logo par défaut)</button>` : ''}
     </div>
+    <div class="card">
+      <h2>🖼️ Photo de fond de la barre du haut</h2>
+      <p style="font-size:13px;">Ajoute une photo derrière le logo, dans le rectangle de la barre du haut — indépendamment du logo lui-même (carte ci-dessus) et de la photo de fond de toute l'app (plus haut) : les trois peuvent coexister. Le logo et les liens (Contact/Se déconnecter) restent affichés par-dessus, un léger assombrissement garde le texte lisible. Sans photo ici, la barre garde simplement le dégradé de couleurs du thème actif.</p>
+      ${state.topbarBgImage ? `
+        <img src="${state.topbarBgImage}" alt="Aperçu de la photo de la barre du haut" style="width:100%; max-height:100px; object-fit:cover; border-radius:10px; margin-bottom:12px;">
+      ` : `<p style="font-size:13px; color:var(--muted);">Aucune photo — la barre du haut garde le dégradé de couleurs du thème actif.</p>`}
+      <input type="file" id="topbar-bg-image-input" accept="image/png,image/jpeg,image/webp" style="margin-bottom:12px;">
+      <button class="primary" id="topbar-bg-image-apply-btn" type="button">Envoyer et appliquer</button>
+      ${state.topbarBgImage ? `<button class="secondary" id="topbar-bg-image-reset-btn" type="button">Retirer (revenir au dégradé du thème)</button>` : ''}
+    </div>
   `;
 }
 
@@ -659,7 +688,7 @@ async function loadContactSettings() {
       api('/admin/settings/contact-whatsapp'),
       api('/admin/settings/theme')
     ]);
-    setState({ contactWhatsapp: contact.whatsappNumber, currentTheme: theme.theme, bgColor: theme.bgColor || '', bgImage: theme.bgImage || '', logo: theme.logo || '', loading: false });
+    setState({ contactWhatsapp: contact.whatsappNumber, currentTheme: theme.theme, bgColor: theme.bgColor || '', bgImage: theme.bgImage || '', topbarBgImage: theme.topbarBgImage || '', logo: theme.logo || '', loading: false });
   } catch (err) {
     if (err.status === 401) { logout(); return; }
     setState({ error: err.message, loading: false });
@@ -871,6 +900,35 @@ function bind() {
         const data = await api('/admin/settings/logo', { method: 'POST', body: { imageDataUrl: '' } });
         applyLogo('');
         setState({ logo: '', success: data.message, error: '' });
+      } catch (err) {
+        setState({ error: err.message });
+      }
+    });
+  }
+  const topbarBgImageApplyBtn = document.getElementById('topbar-bg-image-apply-btn');
+  if (topbarBgImageApplyBtn) {
+    topbarBgImageApplyBtn.addEventListener('click', async () => {
+      const fileInput = document.getElementById('topbar-bg-image-input');
+      const file = fileInput?.files?.[0];
+      if (!file) { setState({ error: 'Choisissez d\'abord une image.' }); return; }
+      setState({ loading: true, error: '' });
+      try {
+        const imageDataUrl = await resizeImageForBg(file);
+        const data = await api('/admin/settings/topbar-bg-image', { method: 'POST', body: { imageDataUrl } });
+        applyTopbarBgImage(data.topbarBgImage);
+        setState({ topbarBgImage: data.topbarBgImage, success: data.message, error: '', loading: false });
+      } catch (err) {
+        setState({ error: err.message, loading: false });
+      }
+    });
+  }
+  const topbarBgImageResetBtn = document.getElementById('topbar-bg-image-reset-btn');
+  if (topbarBgImageResetBtn) {
+    topbarBgImageResetBtn.addEventListener('click', async () => {
+      try {
+        const data = await api('/admin/settings/topbar-bg-image', { method: 'POST', body: { imageDataUrl: '' } });
+        applyTopbarBgImage('');
+        setState({ topbarBgImage: '', success: data.message, error: '' });
       } catch (err) {
         setState({ error: err.message });
       }

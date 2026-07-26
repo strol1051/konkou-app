@@ -67,6 +67,11 @@ const THEMES = {
     label: '❤️ Saint-Valentin',
     vars: { '--blue': '#7a0e2b', '--blue-2': '#c9184a', '--red': '#ff4d6d', '--bg': '#1a0a10', '--card': '#2a121c', '--card-2': '#3a1826' },
     particle: '💕'
+  },
+  rentree: {
+    label: '🎒 Rentrée des classes',
+    vars: { '--blue': '#0f4c3a', '--blue-2': '#1b6a4f', '--red': '#ffb703', '--bg': '#0a1f18', '--card': '#123527', '--card-2': '#1a4432' },
+    particle: '✏️'
   }
 };
 
@@ -147,6 +152,21 @@ function applyBgImage(url) {
   }
 }
 
+// Photo de fond DÉDIÉE à la barre du haut (voir --topbar-bg-image/--topbar-overlay dans
+// styles.css) — indépendante du logo et de la photo de fond de toute l'app (applyBgImage
+// ci-dessus) : posée sur :root comme les couleurs de thème (applyThemeVars), donc valable
+// pour n'importe quel élément .topbar, y compris ceux recréés lors d'un futur render().
+function applyTopbarBgImage(url) {
+  const root = document.documentElement.style;
+  if (url) {
+    root.setProperty('--topbar-bg-image', `url('${url}')`);
+    root.setProperty('--topbar-overlay', 'linear-gradient(rgba(0,0,0,0.35), rgba(0,0,0,0.35))');
+  } else {
+    root.setProperty('--topbar-bg-image', 'none');
+    root.setProperty('--topbar-overlay', 'none');
+  }
+}
+
 async function applyThemeFromServer() {
   try {
     const res = await fetch('/api/theme');
@@ -154,6 +174,7 @@ async function applyThemeFromServer() {
     applyThemeVars(data.theme, data.bgColor);
     applyThemeParticles(data.theme);
     applyBgImage(data.bgImage);
+    applyTopbarBgImage(data.topbarBgImage);
     applyLogo(data.logo);
   } catch {
     // Hors ligne ou erreur réseau : on garde les couleurs par défaut de styles.css.
