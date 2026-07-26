@@ -2,6 +2,120 @@
 
 const APP = document.getElementById('app');
 
+// Champ mot de passe avec un bouton "œil" pour basculer masqué/affiché. Un seul listener
+// délégué (voir plus bas) suffit pour tous les champs générés par cette fonction, peu
+// importe combien de fois la vue est re-rendue.
+function pwdField(name, placeholder) {
+  return `
+    <div class="pwd-wrap">
+      <input name="${name}" type="password" placeholder="${escapeHtml(placeholder)}" required />
+      <button type="button" class="pwd-toggle" aria-label="Afficher le mot de passe">👁</button>
+    </div>
+  `;
+}
+
+// Délégué sur #app (persiste à travers tous les re-rendus, contrairement aux listeners
+// posés dans les fonctions bindXEvents qui sont perdus à chaque innerHTML).
+APP.addEventListener('click', (e) => {
+  const btn = e.target.closest('.pwd-toggle');
+  if (!btn) return;
+  const input = btn.previousElementSibling;
+  if (!input) return;
+  const showing = input.type === 'text';
+  input.type = showing ? 'password' : 'text';
+  btn.textContent = showing ? '👁' : '🙈';
+  btn.setAttribute('aria-label', showing ? 'Afficher le mot de passe' : 'Masquer le mot de passe');
+});
+
+// ---------- THÈME SAISONNIER (choisi par l'admin, voir /admin.html → Réglages) ----------
+// Chaque thème ne fait que recolorer des variables CSS déjà utilisées partout dans
+// styles.css (--blue/--blue-2 = dégradé de la barre du haut, --red = couleur d'accent
+// des boutons/éléments actifs, --bg/--card/--card-2 = fonds) + une particule qui dérive
+// en fond d'écran (voir #theme-particles dans styles.css). --green (succès) et --text/
+// --muted (lisibilité) restent volontairement identiques dans tous les thèmes.
+const THEMES = {
+  default: { label: '🇭🇹 Défaut', vars: {}, particle: null },
+  noel: {
+    label: '🎄 Noël',
+    vars: { '--blue': '#7a0c0c', '--blue-2': '#0d3b1e', '--red': '#c9a227', '--bg': '#0d1210', '--card': '#17241c', '--card-2': '#1f3226' },
+    particle: '❄️'
+  },
+  nouvel_an: {
+    label: '🎆 Nouvel An',
+    vars: { '--blue': '#1a1a1a', '--blue-2': '#3a2f00', '--red': '#f4c542', '--bg': '#0a0a0a', '--card': '#171512', '--card-2': '#221d15' },
+    particle: '🎉'
+  },
+  ete: {
+    label: '☀️ Été',
+    vars: { '--blue': '#0077b6', '--blue-2': '#00b4d8', '--red': '#ff9f1c', '--bg': '#072a3a', '--card': '#0e3a4d', '--card-2': '#14495f' },
+    particle: '☀️'
+  },
+  paques: {
+    label: '🐣 Pâques',
+    vars: { '--blue': '#6a4c93', '--blue-2': '#b298dc', '--red': '#ff8fa3', '--bg': '#1c1526', '--card': '#2a1f38', '--card-2': '#362848' },
+    particle: '🌸'
+  },
+  // Fèt Gede : célébration haïtienne (1er-2 novembre) en hommage aux ancêtres, dans la
+  // tradition vodou — violet, noir et blanc sont ses couleurs traditionnelles. Thème
+  // pensé comme un hommage festif/culturel, pas une représentation religieuse littérale.
+  gede: {
+    label: '💜 Fèt Gede',
+    vars: { '--blue': '#1a1a1a', '--blue-2': '#3d0a4f', '--red': '#9b30ff', '--bg': '#120a17', '--card': '#1e1224', '--card-2': '#2a1830' },
+    particle: '🕯️'
+  }
+};
+
+function applyThemeVars(themeKey) {
+  const theme = THEMES[themeKey] || THEMES.default;
+  const root = document.documentElement.style;
+  // Réinitialise d'abord aux valeurs par défaut (celles de :root dans styles.css) avant
+  // d'appliquer les surcharges du thème choisi, sinon revenir à "default" après avoir
+  // essayé un autre thème ne restaurerait rien (les propriétés inline resteraient figées).
+  ['--blue', '--blue-2', '--red', '--bg', '--card', '--card-2'].forEach(v => root.removeProperty(v));
+  Object.entries(theme.vars).forEach(([k, v]) => root.setProperty(k, v));
+}
+
+function applyThemeParticles(themeKey) {
+  const theme = THEMES[themeKey] || THEMES.default;
+  let container = document.getElementById('theme-particles');
+  if (!container) {
+    container = document.createElement('div');
+    container.id = 'theme-particles';
+    // Inséré avant #app dans <body> — peint en dessous, jamais par-dessus le contenu
+    // (voir le commentaire sur #theme-particles dans styles.css).
+    document.body.insertBefore(container, document.body.firstChild);
+  }
+  container.innerHTML = '';
+  if (!theme.particle) return;
+  const COUNT = 16;
+  for (let i = 0; i < COUNT; i++) {
+    const span = document.createElement('span');
+    span.className = 'particle';
+    span.textContent = theme.particle;
+    const left = Math.random() * 100;
+    const duration = 10 + Math.random() * 12;
+    const delay = Math.random() * -20;
+    const size = 14 + Math.random() * 14;
+    span.style.left = `${left}vw`;
+    span.style.fontSize = `${size}px`;
+    span.style.animationDuration = `${duration}s`;
+    span.style.animationDelay = `${delay}s`;
+    container.appendChild(span);
+  }
+}
+
+async function applyThemeFromServer() {
+  try {
+    const res = await fetch('/api/theme');
+    const data = await res.json();
+    applyThemeVars(data.theme);
+    applyThemeParticles(data.theme);
+  } catch {
+    // Hors ligne ou erreur réseau : on garde les couleurs par défaut de styles.css.
+  }
+}
+applyThemeFromServer();
+
 // Names, referral notes, etc. can contain arbitrary text chosen by other users
 // (e.g. a leaderboard entry, or "Parrainage de X" in a referrer's transaction history).
 // Always escape before inserting into innerHTML to prevent stored XSS.
@@ -36,7 +150,12 @@ const state = {
   lastCashoutDetails: null, // { htgAmount, feePercent, platformFeeHtg, netPayoutHtg } de la dernière demande
   lastDepositCode: null, // code affiché juste après une demande de dépôt réussie
   // jeu en cours
-  game: null // { type, sessionToken, questions/problems, index, answers, result }
+  game: null, // { type, sessionToken, questions/problems, index, answers, result }
+  // Un numéro enregistré comme agent (voir /api/agents/register) n'a plus aucun usage
+  // joueur — isAgent bascule le rendu vers un shell entièrement séparé (voir render()
+  // et renderAgentShell()), sans tabbar ni accès jeux/portefeuille/classement/profil.
+  isAgent: false,
+  agentScreen: 'main' // 'main' | 'contact' — uniquement pertinent quand isAgent est vrai
 };
 
 function setState(patch) {
@@ -62,8 +181,7 @@ function startPolling() {
       const data = await res.json();
       if (data.status === 'confirmed') {
         stopPolling();
-        persistAuth(data.token, data.user);
-        setState({ view: 'home', authMode: 'login', awaiting: null, awaitingStatus: null, error: '', success: '' });
+        await completeLogin(data.token, data.user);
       } else if (data.status === 'expired' || data.status === 'invalid') {
         stopPolling();
         setState({ awaitingStatus: data.status });
@@ -104,9 +222,39 @@ function persistAuth(token, user) {
 function logout() {
   state.token = null;
   state.user = null;
+  state.isAgent = false;
+  state.agentScreen = 'main';
   localStorage.removeItem('konkou_token');
   localStorage.removeItem('konkou_user');
   setState({ view: 'home', authMode: 'login', error: '', success: '' });
+}
+
+// Un numéro agent (voir /api/agents/register) n'est jamais un joueur — on le détecte via
+// /agents/me (et non /profile, qui est désormais refusé côté serveur à ces comptes).
+async function checkAgentStatus() {
+  try {
+    const data = await api('/agents/me');
+    state.isAgent = !!data.agent;
+  } catch {
+    state.isAgent = false;
+  }
+}
+
+// Point d'entrée unique après une connexion réussie (login direct ou confirmation
+// WhatsApp) — détermine si ce numéro est un compte agent avant de choisir vers quel
+// écran basculer, pour ne jamais montrer même brièvement le shell joueur à un agent.
+async function completeLogin(token, user) {
+  persistAuth(token, user);
+  await checkAgentStatus();
+  setState({
+    view: 'home',
+    agentScreen: 'main',
+    authMode: 'login',
+    awaiting: null,
+    awaitingStatus: null,
+    error: '',
+    success: ''
+  });
 }
 
 async function refreshProfile() {
@@ -124,6 +272,12 @@ function render() {
   if (!state.token) {
     APP.innerHTML = renderAuth();
     bindAuthEvents();
+    return;
+  }
+
+  if (state.isAgent) {
+    APP.innerHTML = renderAgentShell();
+    bindAgentShellEvents();
     return;
   }
 
@@ -173,6 +327,8 @@ function authShell(inner) {
 function renderAuth() {
   if (state.authMode === 'awaiting-confirm') return authShell(renderAwaitingConfirm());
   if (state.authMode === 'forgot-request') return authShell(renderForgotRequest());
+  if (state.authMode === 'contact') return authShell(renderContactForm());
+  if (state.authMode === 'agent-register') return authShell(renderAgentRegisterForm());
   return authShell(renderLoginRegister());
 }
 
@@ -184,7 +340,7 @@ function renderLoginRegister() {
       <form id="auth-form">
         ${!isLogin ? `<input name="name" placeholder="Nom complet" required />` : ''}
         <input name="phone" placeholder="Numéro de téléphone (ex: 50937123456)" required />
-        <input name="password" type="password" placeholder="Mot de passe (min. 6 caractères)" required />
+        ${pwdField('password', 'Mot de passe (min. 6 caractères)')}
         ${!isLogin ? `<input name="referralCode" placeholder="Code de parrainage (optionnel)" />` : ''}
         <button class="primary" type="submit">${isLogin ? 'Se connecter' : "S'inscrire"}</button>
       </form>
@@ -196,7 +352,75 @@ function renderLoginRegister() {
     <p style="text-align:center; color:var(--muted); font-size:12px;">
       En vous inscrivant vous recevez 100 points de bienvenue. La confirmation se fait par WhatsApp.
     </p>
+    <button class="link-btn" id="contact-link" style="display:block; margin:6px auto 0; text-align:center;">📞 Nous contacter</button>
+    <button class="link-btn" id="agent-register-link" style="display:block; margin:10px auto 0; text-align:center;">🧑‍💼 Vous êtes agent ? Inscrivez-vous ici</button>
   `;
+}
+
+// Inscription agent : un compte totalement séparé de l'inscription joueur ci-dessus —
+// un numéro enregistré ici n'aura jamais accès aux jeux/portefeuille/classement (voir
+// server.js, blockIfAgent). Fusionne en un seul formulaire ce qui était avant réparti
+// entre l'inscription joueur et la candidature agent depuis le Profil.
+function renderAgentRegisterForm() {
+  return `
+    <div class="card">
+      <h2>🧑‍💼 Devenir agent</h2>
+      <p style="font-size:13px;">Un agent revend des parties bonus aux joueurs et leur paie leurs retraits en espèces, en échange d'une commission. Ce numéro sera réservé aux opérations agent — il ne pourra pas jouer.</p>
+      <p style="font-size:13px;">Conditions : avoir 18 ans ou plus, fournir une pièce d'identité, déposer 7 500 HTG de capital à notre bureau (10% gardé par Konkou, le reste devient votre crédit à revendre).</p>
+      <form id="agent-register-form">
+        <input name="phone" placeholder="Numéro de téléphone (ex: 50937123456)" required />
+        ${pwdField('password', 'Mot de passe (min. 6 caractères)')}
+        <input name="lastName" placeholder="Nom" required />
+        <input name="firstName" placeholder="Prénom" required />
+        <input name="birthDate" type="date" required />
+        <select name="idType" required>
+          <option value="">Type de pièce d'identité</option>
+          <option value="cin">Carte d'Identification Nationale</option>
+          <option value="passeport">Passeport</option>
+          <option value="permis">Permis de conduire</option>
+        </select>
+        <input name="idNumber" placeholder="Numéro de la pièce" required />
+        <button class="primary" type="submit">Envoyer ma candidature</button>
+      </form>
+      <button class="link-btn" id="agent-register-back" style="margin-top:14px;">Retour à la connexion</button>
+    </div>
+  `;
+}
+
+// Formulaire "Nous contacter" — accessible avant connexion (partenaires, prospects sans
+// compte) et depuis le Profil une fois connecté (voir bindProfileEvents). N'envoie rien
+// depuis le serveur : construit un lien wa.me pré-rempli vers le numéro que l'admin a
+// configuré (voir /admin.html), sur le même principe que la confirmation WhatsApp de
+// l'inscription — c'est l'utilisateur qui appuie sur "Envoyer" dans sa propre app WhatsApp.
+function renderContactForm() {
+  return `
+    <div class="card">
+      <h2>📞 Nous contacter</h2>
+      <p>Question, partenariat, problème avec l'app ? Écrivez-nous — votre message s'ouvrira dans WhatsApp, prêt à envoyer.</p>
+      <form id="contact-form">
+        <input name="fullName" placeholder="Nom et prénom" required />
+        <input name="whatsapp" placeholder="Votre numéro WhatsApp (ex: 50937123456)" required />
+        <textarea name="message" placeholder="Votre message (500 caractères max)" maxlength="500" rows="5" required></textarea>
+        <button class="primary" type="submit">Envoyer</button>
+      </form>
+      <button class="link-btn" id="contact-back" style="margin-top:14px;">Retour</button>
+    </div>
+  `;
+}
+
+function bindContactEvents(onBack) {
+  document.getElementById('contact-back').addEventListener('click', onBack);
+  document.getElementById('contact-form').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const fd = Object.fromEntries(new FormData(e.target).entries());
+    try {
+      const data = await api('/contact', { method: 'POST', body: fd });
+      window.open(data.whatsappLink, '_blank');
+      setState({ error: '', success: 'Message prêt — envoyez-le depuis WhatsApp pour le finaliser.' });
+    } catch (err) {
+      setState({ error: err.message, success: '' });
+    }
+  });
 }
 
 function renderForgotRequest() {
@@ -206,7 +430,7 @@ function renderForgotRequest() {
       <p>Entrez votre numéro et votre nouveau mot de passe. Vous confirmerez ensuite via WhatsApp pour l'activer.</p>
       <form id="forgot-request-form">
         <input name="phone" placeholder="Numéro de téléphone" required />
-        <input name="newPassword" type="password" placeholder="Nouveau mot de passe (min. 6 caractères)" required />
+        ${pwdField('newPassword', 'Nouveau mot de passe (min. 6 caractères)')}
         <button class="primary" type="submit">Continuer</button>
       </form>
       <button class="link-btn" id="back-to-login" style="margin-top:14px;">Retour à la connexion</button>
@@ -261,6 +485,10 @@ function renderAwaitingConfirm() {
 function bindAuthEvents() {
   if (state.authMode === 'awaiting-confirm') return bindAwaitingConfirmEvents();
   if (state.authMode === 'forgot-request') return bindForgotRequestEvents();
+  if (state.authMode === 'contact') {
+    return bindContactEvents(() => setState({ authMode: 'login', error: '', success: '' }));
+  }
+  if (state.authMode === 'agent-register') return bindAgentRegisterEvents();
 
   document.getElementById('toggle-auth').addEventListener('click', () => {
     setState({ authMode: state.authMode === 'login' ? 'register' : 'login', error: '', success: '' });
@@ -271,6 +499,12 @@ function bindAuthEvents() {
       setState({ authMode: 'forgot-request', error: '', success: '' });
     });
   }
+  document.getElementById('contact-link').addEventListener('click', () => {
+    setState({ authMode: 'contact', error: '', success: '' });
+  });
+  document.getElementById('agent-register-link').addEventListener('click', () => {
+    setState({ authMode: 'agent-register', error: '', success: '' });
+  });
   document.getElementById('auth-form').addEventListener('submit', async (e) => {
     e.preventDefault();
     const fd = new FormData(e.target);
@@ -282,8 +516,7 @@ function bindAuthEvents() {
         goAwaitingConfirm(data);
         return;
       }
-      persistAuth(data.token, data.user);
-      setState({ view: 'home', error: '', success: '' });
+      await completeLogin(data.token, data.user);
     } catch (err) {
       if (err.code === 'PHONE_NOT_VERIFIED') {
         // The user likely doesn't have a fresh confirmation link anymore — request one now.
@@ -346,6 +579,26 @@ function bindForgotRequestEvents() {
   });
 }
 
+function bindAgentRegisterEvents() {
+  document.getElementById('agent-register-back').addEventListener('click', () => {
+    setState({ authMode: 'login', error: '', success: '' });
+  });
+  document.getElementById('agent-register-form').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const fd = Object.fromEntries(new FormData(e.target).entries());
+    try {
+      const data = await api('/agents/register', { method: 'POST', body: fd });
+      if (data.pendingVerification) {
+        goAwaitingConfirm(data);
+        return;
+      }
+      setState({ authMode: 'login', error: '', success: data.message });
+    } catch (err) {
+      setState({ error: err.message });
+    }
+  });
+}
+
 // ---------- MAIN VIEWS ----------
 function renderView() {
   switch (state.view) {
@@ -356,7 +609,7 @@ function renderView() {
     case 'leaderboard': return renderLeaderboard();
     case 'wallet': return renderWallet();
     case 'profile': return renderProfile();
-    case 'agent': return renderAgent();
+    case 'contact': return renderContactForm();
     default: return renderHome();
   }
 }
@@ -457,6 +710,7 @@ async function startGame(type, stake) {
       result: null,
       timeLimitSeconds: data.timeLimitSeconds || null,
       usingBonusPlay: !!data.usingBonusPlay,
+      remainingPlaysToday: data.remainingPlaysToday,
       stake: data.stake || 0,
       startedAt: Date.now()
     };
@@ -495,6 +749,10 @@ function renderGameScreen(type) {
   const dots = Array.from({ length: total }, (_, i) => `<span class="${i < idx ? 'done' : ''}"></span>`).join('');
   const bonusNote = g.usingBonusPlay ? `<p style="text-align:center; font-size:12px; color:var(--muted);">🎟️ Partie bonus</p>` : '';
   const stakeNote = g.stake > 0 ? `<p style="text-align:center; font-size:12px; color:var(--muted);">💰 Mise en cours : ${g.stake} pts</p>` : '';
+  const remaining = g.remainingPlaysToday;
+  const remainingNote = remaining !== undefined && remaining !== null
+    ? `<p style="text-align:center; font-size:12px; color:var(--muted);">🎮 Parties gratuites restantes aujourd'hui : ${remaining}</p>`
+    : '';
 
   if (type === 'trivia') {
     const q = g.items[idx];
@@ -502,6 +760,7 @@ function renderGameScreen(type) {
       <div class="progress-dots">${dots}</div>
       ${bonusNote}
       ${stakeNote}
+      ${remainingNote}
       <div class="card">
         <h2>Question ${idx + 1}/${total}</h2>
         <p style="color:var(--text); font-size:16px; font-weight:600;">${q.question}</p>
@@ -517,6 +776,8 @@ function renderGameScreen(type) {
   return `
     <div class="progress-dots">${dots}</div>
     ${bonusNote}
+    ${stakeNote}
+    ${remainingNote}
     <div class="card">
       <h2>Calcul ${idx + 1}/${total}</h2>
       <p style="font-size:28px; font-weight:800; text-align:center; color:var(--text);">${p.text} = ?</p>
@@ -839,14 +1100,16 @@ function profileHtml(data) {
       <p>Partagez votre code pour gagner 50 pts par ami inscrit :</p>
       <p style="font-size:22px; font-weight:800; letter-spacing:2px; text-align:center;">${data.referralCode}</p>
     </div>
-    <button class="secondary" id="agent-space-btn">🧑‍💼 Espace Agent</button>
+    <button class="secondary" id="contact-btn">📞 Nous contacter</button>
     <button class="secondary" id="logout-btn">Se déconnecter</button>
     ${confirmingDeleteAccount ? `
       <div class="card" style="border:2px solid var(--red); margin-top:14px;">
         <h2>⚠️ Supprimer mon compte</h2>
-        <p style="font-size:13px;">Action définitive et irréversible. Impossible si vous avez un solde de points, un retrait ou dépôt en attente, ou un rôle agent actif — réglez ces éléments d'abord.</p>
+        <p style="font-size:13px;">Action définitive et irréversible. Impossible s'il y a un retrait ou dépôt en attente, ou un rôle agent actif — réglez ces éléments d'abord.</p>
+        ${data.points > 0 ? `<p class="error-banner">Vous avez <strong>${data.points} points</strong> sur ce compte — ils seront <strong>définitivement perdus</strong> si vous supprimez votre compte maintenant. Ils ne sont ni remboursés ni transférables.</p>` : ''}
+        <p style="font-size:13px; color:var(--muted);">Votre numéro de téléphone sera libéré et pourra être utilisé pour créer un nouveau compte par la suite.</p>
         <form id="delete-account-form">
-          <input name="password" type="password" placeholder="Confirmez votre mot de passe" required />
+          ${pwdField('password', 'Confirmez votre mot de passe')}
           <button class="primary" type="submit" style="background:var(--red);">Supprimer définitivement mon compte</button>
         </form>
         <button class="link-btn" id="cancel-delete-account" style="margin-top:10px;">Annuler</button>
@@ -860,8 +1123,8 @@ function profileHtml(data) {
 let confirmingDeleteAccount = false;
 
 function bindProfileEvents() {
-  const agentBtn = document.getElementById('agent-space-btn');
-  if (agentBtn) agentBtn.addEventListener('click', () => setState({ view: 'agent', error: '', success: '' }));
+  const contactBtn = document.getElementById('contact-btn');
+  if (contactBtn) contactBtn.addEventListener('click', () => setState({ view: 'contact', error: '', success: '' }));
   const btn = document.getElementById('logout-btn');
   if (btn) btn.addEventListener('click', logout);
 
@@ -877,9 +1140,10 @@ function bindProfileEvents() {
       e.preventDefault();
       const password = new FormData(e.target).get('password');
       try {
-        await api('/account/delete', { method: 'POST', body: { password } });
+        const data = await api('/account/delete', { method: 'POST', body: { password } });
         confirmingDeleteAccount = false;
         logout();
+        setState({ success: data.message });
       } catch (err) {
         setState({ error: err.message });
       }
@@ -887,14 +1151,47 @@ function bindProfileEvents() {
   }
 }
 
-// ---------- ESPACE AGENT ----------
+// ---------- ESPACE AGENT (shell entièrement séparé — voir renderAgentShell()) ----------
 let agentForceForm = false; // true after "Soumettre une nouvelle candidature" on a rejected application
 
-async function renderAgentAsync() {
+function renderAgentShell() {
+  return `
+    <div class="topbar">
+      <img src="logo.png" alt="Konkou" class="topbar-logo">
+      <div style="display:flex; gap:16px; align-items:center;">
+        <button class="link-btn" id="agent-contact-btn" style="color:#fff; font-size:13px;">📞 Contact</button>
+        <button class="link-btn" id="agent-logout-btn" style="color:#fff; font-size:13px;">Se déconnecter</button>
+      </div>
+    </div>
+    <div class="view" id="agent-shell-content">
+      <div class="center-msg">Chargement...</div>
+    </div>
+  `;
+}
+
+function bindAgentShellEvents() {
+  document.getElementById('agent-logout-btn').addEventListener('click', logout);
+  document.getElementById('agent-contact-btn').addEventListener('click', () => {
+    setState({ agentScreen: state.agentScreen === 'contact' ? 'main' : 'contact', error: '', success: '' });
+  });
+
+  const content = document.getElementById('agent-shell-content');
+  if (state.agentScreen === 'contact') {
+    content.innerHTML = renderContactForm();
+    bindContactEvents(() => setState({ agentScreen: 'main', error: '', success: '' }));
+  } else {
+    renderAgentMainAsync();
+  }
+}
+
+async function renderAgentMainAsync() {
   try {
     const me = await api('/agents/me');
     let html;
-    if (!me.agent || agentForceForm) {
+    if (!me.agent) {
+      // Ne devrait pas arriver (isAgent implique une ligne agents) — filet de sécurité.
+      html = `<div class="card"><p>Compte agent introuvable. Contactez l'administrateur.</p></div>`;
+    } else if (agentForceForm) {
       html = agentApplyFormHtml();
     } else if (me.agent.status === 'pending') {
       html = agentPendingHtml(me.agent);
@@ -904,7 +1201,7 @@ async function renderAgentAsync() {
       const dash = await api('/agents/dashboard');
       html = agentDashboardHtml(dash);
     }
-    const content = document.getElementById('view-content');
+    const content = document.getElementById('agent-shell-content');
     if (!content) return;
     content.innerHTML = html;
     bindAgentEvents();
@@ -913,23 +1210,12 @@ async function renderAgentAsync() {
   }
 }
 
-function renderAgent() {
-  setTimeout(renderAgentAsync, 0);
-  return `<div class="center-msg">Chargement...</div>`;
-}
-
-function agentBackLink() {
-  return `<button class="link-btn" id="agent-back" style="margin-bottom:12px;">← Retour au profil</button>`;
-}
-
 function agentApplyFormHtml() {
   return `
-    ${agentBackLink()}
     ${state.error ? `<div class="error-banner">${escapeHtml(state.error)}</div>` : ''}
     ${state.success ? `<div class="success-banner">${escapeHtml(state.success)}</div>` : ''}
     <div class="card">
-      <h2>🧑‍💼 Devenir agent</h2>
-      <p>Un agent revend des parties bonus aux joueurs et leur paie leurs retraits en espèces, en échange d'une commission. Conditions :</p>
+      <h2>🧑‍💼 Nouvelle candidature</h2>
       <p>1. Avoir 18 ans ou plus.</p>
       <p>2. Fournir une pièce d'identité (CIN, passeport ou permis de conduire).</p>
       <p>3. Déposer 7 500 HTG de capital à notre bureau — 10% est gardé par Konkou, le reste (6 750 HTG) devient votre crédit à revendre aux joueurs.</p>
@@ -955,7 +1241,6 @@ function agentApplyFormHtml() {
 
 function agentPendingHtml(agent) {
   return `
-    ${agentBackLink()}
     ${state.success ? `<div class="success-banner">${escapeHtml(state.success)}</div>` : ''}
     <div class="card">
       <h2>⏳ Candidature en attente</h2>
@@ -969,7 +1254,6 @@ function agentPendingHtml(agent) {
 
 function agentRejectedHtml(agent) {
   return `
-    ${agentBackLink()}
     <div class="card">
       <h2>❌ Candidature rejetée</h2>
       <p>Votre candidature agent (code ${escapeHtml(agent.agentCode)}) a été rejetée.</p>
@@ -980,7 +1264,6 @@ function agentRejectedHtml(agent) {
 
 function agentDashboardHtml(dash) {
   return `
-    ${agentBackLink()}
     ${state.error ? `<div class="error-banner">${escapeHtml(state.error)}</div>` : ''}
     ${state.success ? `<div class="success-banner">${escapeHtml(state.success)}</div>` : ''}
     <div class="card">
@@ -1046,9 +1329,6 @@ function refillStatusLabel(status) {
 }
 
 function bindAgentEvents() {
-  const backBtn = document.getElementById('agent-back');
-  if (backBtn) backBtn.addEventListener('click', () => setState({ view: 'profile', error: '', success: '' }));
-
   const form = document.getElementById('agent-apply-form');
   if (form) {
     form.addEventListener('submit', async (e) => {
@@ -1114,19 +1394,23 @@ function bindViewEvents() {
   if (state.view === 'home') bindHomeEvents();
   if (state.view === 'stakePrompt') bindStakePromptEvents();
   if (state.view === 'trivia' || state.view === 'puzzle') bindGameEvents();
+  if (state.view === 'contact') bindContactEvents(() => setState({ view: 'profile', error: '', success: '' }));
   // leaderboard / wallet / profile bind themselves after async load
 }
 
 // ---------- INIT ----------
 (async function init() {
-  if (state.token && !state.user) {
-    try {
-      const p = await api('/profile');
-      state.user = p;
-    } catch {
-      state.token = null;
+  if (state.token) {
+    await checkAgentStatus();
+    if (!state.isAgent && !state.user) {
+      try {
+        const p = await api('/profile');
+        state.user = p;
+      } catch {
+        state.token = null;
+      }
     }
   }
   render();
-  if (state.token) refreshProfile();
+  if (state.token && !state.isAgent) refreshProfile();
 })();

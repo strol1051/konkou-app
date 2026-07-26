@@ -13,6 +13,8 @@ import * as adminRoutes from './routes/admin.js';
 import * as depositsRoutes from './routes/deposits.js';
 import * as agentsRoutes from './routes/agents.js';
 import * as accountRoutes from './routes/account.js';
+import * as contactRoutes from './routes/contact.js';
+import * as themeRoutes from './routes/theme.js';
 
 loadEnv();
 process.env.JWT_SECRET = process.env.JWT_SECRET || 'konkou_dev_secret_change_in_production';
@@ -69,6 +71,19 @@ function requireAdmin(req, res) {
     return false;
   }
   return true;
+}
+
+// Un numéro enregistré comme agent (voir agentsRoutes.registerAgent) n'a plus aucun
+// usage joueur — cette garde, posée après requireAuth() sur les routes jeux/portefeuille/
+// classement/dépôts/liste-agents, empêche un tel compte d'y accéder même en appelant
+// l'API directement (défense en profondeur ; côté frontend, ces écrans ne sont de toute
+// façon jamais montrés à un compte agent — voir app.js, state.isAgent).
+function blockIfAgent(req, res, userId) {
+  if (agentsRoutes.isAgentLinked(userId)) {
+    sendJson(res, 403, { error: 'Ce numéro est enregistré comme agent — réservé aux opérations agent (recharge/retrait), aucun accès aux jeux, au portefeuille ou au classement.' });
+    return true;
+  }
+  return false;
 }
 
 const server = http.createServer(async (req, res) => {
@@ -135,43 +150,57 @@ const server = http.createServer(async (req, res) => {
 
     if (pathname === '/api/games/trivia' && method === 'GET') {
       const userId = requireAuth(req, res); if (userId == null) return;
+      if (blockIfAgent(req, res, userId)) return;
       const { status, data } = gamesRoutes.getTrivia(userId, url.searchParams.get('stake'));
       return sendJson(res, status, data);
     }
 
     if (pathname === '/api/games/trivia/submit' && method === 'POST') {
       const userId = requireAuth(req, res); if (userId == null) return;
+      if (blockIfAgent(req, res, userId)) return;
       const { status, data } = gamesRoutes.submitTrivia(userId, body);
       return sendJson(res, status, data);
     }
 
     if (pathname === '/api/games/puzzle' && method === 'GET') {
       const userId = requireAuth(req, res); if (userId == null) return;
+      if (blockIfAgent(req, res, userId)) return;
       const { status, data } = gamesRoutes.getPuzzle(userId, url.searchParams.get('stake'));
       return sendJson(res, status, data);
     }
 
     if (pathname === '/api/games/puzzle/submit' && method === 'POST') {
       const userId = requireAuth(req, res); if (userId == null) return;
+      if (blockIfAgent(req, res, userId)) return;
       const { status, data } = gamesRoutes.submitPuzzle(userId, body);
       return sendJson(res, status, data);
     }
 
     if (pathname === '/api/wallet' && method === 'GET') {
       const userId = requireAuth(req, res); if (userId == null) return;
+      if (blockIfAgent(req, res, userId)) return;
       const { status, data } = walletRoutes.getWallet(userId);
       return sendJson(res, status, data);
     }
 
     if (pathname === '/api/wallet/cashout' && method === 'POST') {
       const userId = requireAuth(req, res); if (userId == null) return;
+      if (blockIfAgent(req, res, userId)) return;
       const { status, data } = walletRoutes.postCashout(userId, body);
       return sendJson(res, status, data);
     }
 
     if (pathname === '/api/deposits' && method === 'POST') {
       const userId = requireAuth(req, res); if (userId == null) return;
+      if (blockIfAgent(req, res, userId)) return;
       const { status, data } = depositsRoutes.postDeposit(userId, body);
+      return sendJson(res, status, data);
+    }
+
+    // Inscription agent dédiée, publique (pas de session requise) — voir
+    // agentsRoutes.registerAgent : crée le compte ET la candidature en une étape.
+    if (pathname === '/api/agents/register' && method === 'POST') {
+      const { status, data } = await agentsRoutes.registerAgent(body);
       return sendJson(res, status, data);
     }
 
@@ -183,6 +212,7 @@ const server = http.createServer(async (req, res) => {
 
     if (pathname === '/api/agents/list' && method === 'GET') {
       const userId = requireAuth(req, res); if (userId == null) return;
+      if (blockIfAgent(req, res, userId)) return;
       const { status, data } = agentsRoutes.listActiveAgents();
       return sendJson(res, status, data);
     }
@@ -231,12 +261,14 @@ const server = http.createServer(async (req, res) => {
 
     if (pathname === '/api/leaderboard' && method === 'GET') {
       const userId = requireAuth(req, res); if (userId == null) return;
+      if (blockIfAgent(req, res, userId)) return;
       const { status, data } = leaderboardRoutes.getLeaderboard(userId, url.searchParams.get('period'));
       return sendJson(res, status, data);
     }
 
     if (pathname === '/api/profile' && method === 'GET') {
       const userId = requireAuth(req, res); if (userId == null) return;
+      if (blockIfAgent(req, res, userId)) return;
       const { status, data } = profileRoutes.getProfile(userId);
       return sendJson(res, status, data);
     }
@@ -244,6 +276,19 @@ const server = http.createServer(async (req, res) => {
     if (pathname === '/api/account/delete' && method === 'POST') {
       const userId = requireAuth(req, res); if (userId == null) return;
       const { status, data } = accountRoutes.deleteMyAccount(userId, body);
+      return sendJson(res, status, data);
+    }
+
+    // Formulaire "Nous contacter" — public, aucune authentification (partenaires et
+    // joueurs, connectés ou non, doivent pouvoir l'utiliser).
+    if (pathname === '/api/contact' && method === 'POST') {
+      const { status, data } = contactRoutes.submitContact(body);
+      return sendJson(res, status, data);
+    }
+
+    // Thème actif — public, lu par app.js/admin.js avant même une éventuelle connexion.
+    if (pathname === '/api/theme' && method === 'GET') {
+      const { status, data } = themeRoutes.getTheme();
       return sendJson(res, status, data);
     }
 
@@ -369,6 +414,30 @@ const server = http.createServer(async (req, res) => {
     if (pathname === '/api/admin/accounts/delete' && method === 'POST') {
       if (!requireAdmin(req, res)) return;
       const { status, data } = accountRoutes.adminDeleteAccount(body);
+      return sendJson(res, status, data);
+    }
+
+    if (pathname === '/api/admin/settings/contact-whatsapp' && method === 'GET') {
+      if (!requireAdmin(req, res)) return;
+      const { status, data } = contactRoutes.getContactSettings();
+      return sendJson(res, status, data);
+    }
+
+    if (pathname === '/api/admin/settings/contact-whatsapp' && method === 'POST') {
+      if (!requireAdmin(req, res)) return;
+      const { status, data } = contactRoutes.setContactWhatsapp(body);
+      return sendJson(res, status, data);
+    }
+
+    if (pathname === '/api/admin/settings/theme' && method === 'GET') {
+      if (!requireAdmin(req, res)) return;
+      const { status, data } = themeRoutes.getTheme();
+      return sendJson(res, status, data);
+    }
+
+    if (pathname === '/api/admin/settings/theme' && method === 'POST') {
+      if (!requireAdmin(req, res)) return;
+      const { status, data } = themeRoutes.setTheme(body);
       return sendJson(res, status, data);
     }
 

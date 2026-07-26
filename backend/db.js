@@ -141,6 +141,16 @@ CREATE TABLE IF NOT EXISTS agent_refills (
   requested_at TEXT DEFAULT (datetime('now')),
   processed_at TEXT
 );
+
+-- Petite table clé/valeur pour les réglages modifiables par l'admin sans redéploiement
+-- (contrairement aux variables d'environnement comme OPERATOR_WHATSAPP_NUMBER, qui
+-- nécessitent de changer la config Render). Utilisée pour l'instant uniquement pour le
+-- numéro WhatsApp qui reçoit les messages de "Nous contacter" (voir routes/contact.js).
+CREATE TABLE IF NOT EXISTS settings (
+  key TEXT PRIMARY KEY,
+  value TEXT NOT NULL,
+  updated_at TEXT DEFAULT (datetime('now'))
+);
 `);
 
 // Lightweight migrations for databases created before these columns existed.

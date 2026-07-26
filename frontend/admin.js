@@ -11,6 +11,104 @@ function escapeHtml(value) {
   }[c]));
 }
 
+// Champ mot de passe avec bouton "œil" — voir app.js pour la même logique côté joueur.
+function pwdField(name, placeholder) {
+  return `
+    <div class="pwd-wrap">
+      <input name="${name}" type="password" placeholder="${escapeHtml(placeholder)}" required />
+      <button type="button" class="pwd-toggle" aria-label="Afficher le mot de passe">👁</button>
+    </div>
+  `;
+}
+
+APP.addEventListener('click', (e) => {
+  const btn = e.target.closest('.pwd-toggle');
+  if (!btn) return;
+  const input = btn.previousElementSibling;
+  if (!input) return;
+  const showing = input.type === 'text';
+  input.type = showing ? 'password' : 'text';
+  btn.textContent = showing ? '👁' : '🙈';
+  btn.setAttribute('aria-label', showing ? 'Afficher le mot de passe' : 'Masquer le mot de passe');
+});
+
+// ---------- THÈME SAISONNIER — voir app.js pour la documentation complète, logique
+// identique côté admin pour que /admin.html reflète le même thème que l'app joueur. ----------
+const THEMES = {
+  default: { label: '🇭🇹 Défaut', vars: {}, particle: null },
+  noel: {
+    label: '🎄 Noël',
+    vars: { '--blue': '#7a0c0c', '--blue-2': '#0d3b1e', '--red': '#c9a227', '--bg': '#0d1210', '--card': '#17241c', '--card-2': '#1f3226' },
+    particle: '❄️'
+  },
+  nouvel_an: {
+    label: '🎆 Nouvel An',
+    vars: { '--blue': '#1a1a1a', '--blue-2': '#3a2f00', '--red': '#f4c542', '--bg': '#0a0a0a', '--card': '#171512', '--card-2': '#221d15' },
+    particle: '🎉'
+  },
+  ete: {
+    label: '☀️ Été',
+    vars: { '--blue': '#0077b6', '--blue-2': '#00b4d8', '--red': '#ff9f1c', '--bg': '#072a3a', '--card': '#0e3a4d', '--card-2': '#14495f' },
+    particle: '☀️'
+  },
+  paques: {
+    label: '🐣 Pâques',
+    vars: { '--blue': '#6a4c93', '--blue-2': '#b298dc', '--red': '#ff8fa3', '--bg': '#1c1526', '--card': '#2a1f38', '--card-2': '#362848' },
+    particle: '🌸'
+  },
+  gede: {
+    label: '💜 Fèt Gede',
+    vars: { '--blue': '#1a1a1a', '--blue-2': '#3d0a4f', '--red': '#9b30ff', '--bg': '#120a17', '--card': '#1e1224', '--card-2': '#2a1830' },
+    particle: '🕯️'
+  }
+};
+
+function applyThemeVars(themeKey) {
+  const theme = THEMES[themeKey] || THEMES.default;
+  const root = document.documentElement.style;
+  ['--blue', '--blue-2', '--red', '--bg', '--card', '--card-2'].forEach(v => root.removeProperty(v));
+  Object.entries(theme.vars).forEach(([k, v]) => root.setProperty(k, v));
+}
+
+function applyThemeParticles(themeKey) {
+  const theme = THEMES[themeKey] || THEMES.default;
+  let container = document.getElementById('theme-particles');
+  if (!container) {
+    container = document.createElement('div');
+    container.id = 'theme-particles';
+    document.body.insertBefore(container, document.body.firstChild);
+  }
+  container.innerHTML = '';
+  if (!theme.particle) return;
+  const COUNT = 16;
+  for (let i = 0; i < COUNT; i++) {
+    const span = document.createElement('span');
+    span.className = 'particle';
+    span.textContent = theme.particle;
+    const left = Math.random() * 100;
+    const duration = 10 + Math.random() * 12;
+    const delay = Math.random() * -20;
+    const size = 14 + Math.random() * 14;
+    span.style.left = `${left}vw`;
+    span.style.fontSize = `${size}px`;
+    span.style.animationDuration = `${duration}s`;
+    span.style.animationDelay = `${delay}s`;
+    container.appendChild(span);
+  }
+}
+
+async function applyThemeFromServer() {
+  try {
+    const res = await fetch('/api/theme');
+    const data = await res.json();
+    applyThemeVars(data.theme);
+    applyThemeParticles(data.theme);
+  } catch {
+    // Hors ligne ou erreur réseau : on garde les couleurs par défaut de styles.css.
+  }
+}
+applyThemeFromServer();
+
 const state = {
   token: localStorage.getItem('konkou_admin_token') || null,
   section: 'cashouts', // cashouts | verifications | deposits | agents | refills | revenue
@@ -23,6 +121,8 @@ const state = {
   refills: [],
   revenue: null,
   accountLookup: null,
+  contactWhatsapp: null, // numéro configuré pour "Nous contacter" (null tant que non défini)
+  currentTheme: 'default', // thème saisonnier actif (voir THEMES plus haut)
   error: '',
   success: '',
   loading: false
@@ -67,7 +167,7 @@ function renderLogin() {
       <div class="card">
         <h2>Connexion</h2>
         <form id="login-form">
-          <input name="password" type="password" placeholder="Mot de passe administrateur" required />
+          ${pwdField('password', 'Mot de passe administrateur')}
           <button class="primary" type="submit">Se connecter</button>
         </form>
       </div>
@@ -76,7 +176,7 @@ function renderLogin() {
 }
 
 function renderDashboard() {
-  const sections = [['cashouts', '💸 Retraits'], ['verifications', '💬 Vérifications'], ['deposits', '🎟️ Dépôts'], ['agents', '🧑‍💼 Agents'], ['refills', '💳 Renflouements'], ['revenue', '📊 Revenus'], ['accounts', '🗑️ Comptes']];
+  const sections = [['cashouts', '💸 Retraits'], ['verifications', '💬 Vérifications'], ['deposits', '🎟️ Dépôts'], ['agents', '🧑‍💼 Agents'], ['refills', '💳 Renflouements'], ['revenue', '📊 Revenus'], ['accounts', '🗑️ Comptes'], ['settings', '⚙️ Réglages']];
   return `
     <div class="topbar">
       <h1>🇭🇹 Konkou — Gestion</h1>
@@ -104,6 +204,7 @@ function renderSectionBody() {
   if (state.section === 'refills') return renderRefillsSection();
   if (state.section === 'revenue') return renderRevenueSection();
   if (state.section === 'accounts') return renderAccountsSection();
+  if (state.section === 'settings') return renderSettingsSection();
   return '';
 }
 
@@ -272,7 +373,7 @@ function renderAccountsSection() {
   return `
     <div class="card" style="margin-top:14px;">
       <h2>🗑️ Supprimer un compte</h2>
-      <p style="font-size:13px;">Recherchez un compte (agent ou joueur) par numéro de téléphone. La suppression est bloquée si le compte a un solde de points, un retrait ou dépôt en attente, ou un rôle agent actif — réglez ces éléments d'abord via les autres onglets, puis revenez ici.</p>
+      <p style="font-size:13px;">Recherchez un compte (agent ou joueur) par numéro de téléphone. La suppression est bloquée si le compte a un retrait ou dépôt en attente, ou un rôle agent actif — réglez ces éléments d'abord via les autres onglets, puis revenez ici. Un solde de points ne bloque plus la suppression : il est simplement perdu.</p>
       <form id="account-lookup-form">
         <input name="phone" placeholder="Numéro de téléphone" required />
         <button class="primary" type="submit">Rechercher</button>
@@ -298,7 +399,45 @@ function accountLookupResultHtml(result) {
           <div class="stat-row"><span>Commissions</span><span>${a.commission_earned} HTG</span></div>
         ` : ''}
       ` : `<p style="font-size:12px; color:var(--muted);">Pas de rôle agent.</p>`}
-      <button class="tile" id="account-delete-btn" data-phone="${escapeHtml(u.phone)}" style="background:rgba(210,16,52,0.2); width:100%; margin-top:10px;">🗑️ Supprimer ce compte définitivement</button>
+      ${u.points > 0 ? `<p class="error-banner">⚠️ Ce compte a <strong>${u.points} points</strong> — ils seront définitivement perdus à la suppression.</p>` : ''}
+      <button class="tile" id="account-delete-btn" data-phone="${escapeHtml(u.phone)}" data-points="${u.points}" style="background:rgba(210,16,52,0.2); width:100%; margin-top:10px;">🗑️ Supprimer ce compte définitivement</button>
+    </div>
+  `;
+}
+
+// ---------- Réglages ----------
+// Numéro WhatsApp qui reçoit les messages du formulaire "Nous contacter" (voir
+// backend/routes/contact.js et app.js). Stocké en base (table settings), donc
+// modifiable ici sans redéploiement — contrairement à OPERATOR_WHATSAPP_NUMBER qui
+// reste une variable d'environnement pour la confirmation d'inscription/reset.
+function renderSettingsSection() {
+  const current = state.contactWhatsapp;
+  return `
+    <div class="card" style="margin-top:14px;">
+      <h2>📞 Numéro de contact ("Nous contacter")</h2>
+      <p style="font-size:13px;">Les messages envoyés depuis "Nous contacter" (côté joueur) s'ouvriront sur WhatsApp vers ce numéro.</p>
+      <p style="font-size:13px; color:var(--muted);">
+        ${current ? `Numéro actuel : <strong style="color:var(--text);">${escapeHtml(current)}</strong>` : "Aucun numéro configuré pour l'instant — le formulaire de contact affichera une erreur tant qu'il n'est pas défini."}
+      </p>
+      <form id="contact-whatsapp-form">
+        <input name="whatsappNumber" placeholder="Numéro WhatsApp (ex: 50937123456)" value="${current ? escapeHtml(current) : ''}" required />
+        <button class="primary" type="submit">Enregistrer</button>
+      </form>
+    </div>
+    <div class="card">
+      <h2>🎨 Thème de l'app</h2>
+      <p style="font-size:13px;">Change les couleurs et ajoute un décor animé sur toute l'app (joueur et admin). S'applique immédiatement pour tout le monde au prochain chargement de la page.</p>
+      <div class="grid-2" style="grid-template-columns: repeat(2, 1fr);">
+        ${Object.entries(THEMES).map(([key, t]) => `
+          <button class="tile" data-theme-pick="${key}" style="display:flex; flex-direction:column; align-items:center; gap:6px; padding:14px 8px; ${state.currentTheme === key ? 'outline:2px solid var(--green);' : ''}">
+            <span style="font-size:22px;">${t.label.split(' ')[0]}</span>
+            <span style="font-size:12px;">${t.label.split(' ').slice(1).join(' ')}</span>
+            <span style="display:flex; gap:4px;">
+              ${['--blue', '--red', '--bg'].map(v => `<span style="width:12px; height:12px; border-radius:50%; background:${t.vars[v] || `var(${v})`}; border:1px solid rgba(255,255,255,0.2);"></span>`).join('')}
+            </span>
+          </button>
+        `).join('')}
+      </div>
     </div>
   `;
 }
@@ -370,6 +509,20 @@ async function loadRevenue() {
   }
 }
 
+async function loadContactSettings() {
+  setState({ loading: true, error: '' });
+  try {
+    const [contact, theme] = await Promise.all([
+      api('/admin/settings/contact-whatsapp'),
+      api('/admin/settings/theme')
+    ]);
+    setState({ contactWhatsapp: contact.whatsappNumber, currentTheme: theme.theme, loading: false });
+  } catch (err) {
+    if (err.status === 401) { logout(); return; }
+    setState({ error: err.message, loading: false });
+  }
+}
+
 function loadSection() {
   if (state.section === 'cashouts') return loadCashouts();
   if (state.section === 'verifications') return loadVerifications();
@@ -377,6 +530,7 @@ function loadSection() {
   if (state.section === 'agents') return loadAgents();
   if (state.section === 'refills') return loadRefills();
   if (state.section === 'revenue') return loadRevenue();
+  if (state.section === 'settings') return loadContactSettings();
 }
 
 // ---------- Bind ----------
@@ -470,11 +624,41 @@ function bind() {
       }
     });
   }
+  const contactWhatsappForm = document.getElementById('contact-whatsapp-form');
+  if (contactWhatsappForm) {
+    contactWhatsappForm.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const whatsappNumber = new FormData(e.target).get('whatsappNumber');
+      try {
+        const data = await api('/admin/settings/contact-whatsapp', { method: 'POST', body: { whatsappNumber } });
+        setState({ success: data.message, error: '', contactWhatsapp: data.whatsappNumber });
+      } catch (err) {
+        setState({ error: err.message });
+      }
+    });
+  }
+  document.querySelectorAll('[data-theme-pick]').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      const theme = btn.dataset.themePick;
+      try {
+        const data = await api('/admin/settings/theme', { method: 'POST', body: { theme } });
+        applyThemeVars(data.theme);
+        applyThemeParticles(data.theme);
+        setState({ currentTheme: data.theme, success: data.message, error: '' });
+      } catch (err) {
+        setState({ error: err.message });
+      }
+    });
+  });
   const deleteAccountBtn = document.getElementById('account-delete-btn');
   if (deleteAccountBtn) {
     deleteAccountBtn.addEventListener('click', async () => {
       const phone = deleteAccountBtn.dataset.phone;
-      if (!confirm(`Supprimer définitivement le compte ${phone} ? Cette action est irréversible.`)) return;
+      const points = Number(deleteAccountBtn.dataset.points) || 0;
+      const warning = points > 0
+        ? `Supprimer définitivement le compte ${phone} ? Cette action est irréversible et ${points} points seront définitivement perdus.`
+        : `Supprimer définitivement le compte ${phone} ? Cette action est irréversible.`;
+      if (!confirm(warning)) return;
       try {
         const data = await api('/admin/accounts/delete', { method: 'POST', body: { phone } });
         setState({ success: data.message, error: '', accountLookup: null });

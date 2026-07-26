@@ -1,5 +1,6 @@
 :root {
   --blue: #00209F;
+  --blue-2: #001560; /* 2e couleur du dégradé de la barre du haut — thémable, voir applyTheme() */
   --red: #D21034;
   --bg: #0b1220;
   --card: #141d33;
@@ -46,7 +47,7 @@ body {
   align-items: center;
   justify-content: space-between;
   padding: 18px 20px 12px;
-  background: linear-gradient(135deg, var(--blue), #001560);
+  background: linear-gradient(135deg, var(--blue), var(--blue-2));
 }
 
 .topbar h1 {
@@ -142,7 +143,7 @@ button.secondary {
   margin-top: 8px;
 }
 
-input, select {
+input, select, textarea {
   width: 100%;
   padding: 13px 14px;
   border-radius: 10px;
@@ -151,6 +152,43 @@ input, select {
   color: var(--text);
   font-size: 15px;
   margin-bottom: 12px;
+}
+
+textarea {
+  font-family: inherit;
+  resize: vertical;
+}
+
+/* Champ mot de passe avec bouton "œil" (voir pwdField() dans app.js/admin.js). */
+.pwd-wrap {
+  position: relative;
+}
+
+.pwd-wrap input {
+  padding-right: 46px;
+  margin-bottom: 0;
+}
+
+.pwd-wrap {
+  margin-bottom: 12px;
+}
+
+.pwd-toggle {
+  position: absolute;
+  top: 0;
+  right: 0;
+  height: 100%;
+  width: 44px;
+  padding: 0;
+  margin: 0;
+  border: none;
+  background: transparent;
+  font-size: 18px;
+  line-height: 1;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
 
 .error-banner {
@@ -332,4 +370,33 @@ input, select {
   text-align: center;
   color: var(--muted);
   padding: 40px 10px;
+}
+
+/* Décor animé du thème saisonnier (voir applyTheme() dans app.js/admin.js) — un
+   conteneur plein écran, non cliquable, ajouté une seule fois à <body>, avant #app dans
+   le DOM (pas à l'intérieur, qui est entièrement remplacé à chaque rendu) pour que
+   l'animation ne redémarre jamais en boucle. Placé avant #app dans le DOM donc peint en
+   dessous — visible dans les espaces transparents entre les cartes, jamais par-dessus le
+   contenu (même principe que le filigrane du logo sur <body>). Chaque particule dérive
+   du haut vers le bas de l'écran en boucle infinie. */
+#theme-particles {
+  position: fixed;
+  inset: 0;
+  overflow: hidden;
+  pointer-events: none;
+  z-index: 0;
+}
+
+#theme-particles .particle {
+  position: absolute;
+  top: -10%;
+  font-size: 20px;
+  opacity: 0.55;
+  animation: theme-drift linear infinite;
+  will-change: transform;
+}
+
+@keyframes theme-drift {
+  0% { transform: translateY(0) rotate(0deg); }
+  100% { transform: translateY(115vh) rotate(360deg); }
 }

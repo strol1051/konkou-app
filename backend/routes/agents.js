@@ -1,4 +1,7 @@
+import crypto from 'node:crypto';
 import db from '../db.js';
+import { hashPassword } from '../utils.js';
+import { issueOtp } from '../otp.js';
 
 export function getAgentCapitalHtg() { return parseFloat(process.env.AGENT_CAPITAL_HTG || '7500'); }
 export function getAgentCapitalFeePercent() { return parseFloat(process.env.AGENT_CAPITAL_FEE_PERCENT || '10'); }
@@ -125,6 +128,110 @@ export function applyAgent(userId, body) {
       agentCode,
       capitalHtg: capital,
       status: 'pending'
+    }
+  };
+}
+
+function whatsappMessage(whatsappLink, successText, missingConfigText) {
+  return whatsappLink
+    ? successText
+    : `${missingConfigText} — aucun numéro WhatsApp n'est configuré côté serveur (OPERATOR_WHATSAPP_NUMBER), contactez l'administrateur.`;
+}
+
+function makeReferralCode(name) {
+  const base = (name || 'agent').replace(/[^a-zA-Z]/g, '').slice(0, 4).toUpperCase() || 'AGNT';
+  return base + crypto.randomBytes(3).toString('hex').toUpperCase();
+}
+
+// True si ce compte est lié à une ligne "agents" (peu importe le statut — pending,
+// active ou rejected comptent tous comme "numéro enregistré en tant qu'agent"). Utilisé
+// par server.js pour bloquer, côté serveur, tout accès aux fonctionnalités joueur
+// (jeux, portefeuille, classement...) — un numéro agent n'a plus aucun usage joueur,
+// voir registerAgent ci-dessous pour le flux d'inscription dédié.
+export function isAgentLinked(userId) {
+  return !!db.prepare('SELECT 1 FROM agents WHERE user_id = ?').get(userId);
+}
+
+// Inscription agent en une étape, complètement séparée de l'inscription joueur
+// (/api/auth/register) — accessible sans être connecté, depuis un lien dédié sur
+// l'écran de connexion. Crée le compte (users) ET la candidature agent (agents) en même
+// temps, avec 0 point de bienvenue (un compte agent n'a aucun usage joueur). Si ce
+// numéro est déjà un compte joueur/agent vérifié, on refuse — un même numéro ne peut
+// pas être à la fois joueur et agent : c'est justement ce qui garantit qu'un numéro
+// "agent" n'a jamais accès aux fonctionnalités joueur.
+export async function registerAgent(body) {
+  const { phone, password, lastName, firstName, birthDate, idType, idNumber } = body || {};
+  if (!phone || !password) {
+    return { status: 400, data: { error: 'Téléphone et mot de passe requis' } };
+  }
+  if (String(password).length < 6) {
+    return { status: 400, data: { error: 'Le mot de passe doit contenir au moins 6 caractères' } };
+  }
+  if (!lastName || !firstName || !birthDate || !idType || !idNumber || !String(idNumber).trim()) {
+    return { status: 400, data: { error: "Nom, prénom, date de naissance, type et numéro de pièce d'identité requis" } };
+  }
+  if (!ID_TYPES.includes(idType)) {
+    return { status: 400, data: { error: "Type de pièce d'identité invalide" } };
+  }
+  const age = calcAge(birthDate);
+  if (age === null) return { status: 400, data: { error: 'Date de naissance invalide' } };
+  if (age < 18) return { status: 400, data: { error: 'Vous devez avoir au moins 18 ans pour devenir agent' } };
+
+  const existing = db.prepare('SELECT id, phone_verified FROM users WHERE phone = ?').get(phone);
+  if (existing && existing.phone_verified) {
+    return { status: 409, data: { error: 'Ce numéro est déjà enregistré' } };
+  }
+
+  const name = `${firstName} ${lastName}`.trim();
+  const hash = hashPassword(password);
+  let userId;
+
+  if (existing) {
+    // Reprise d'une inscription jamais vérifiée sur ce numéro (même logique que
+    // l'inscription joueur classique dans routes/auth.js).
+    userId = existing.id;
+    db.prepare('UPDATE users SET name = ?, password_hash = ? WHERE id = ?').run(name, hash, userId);
+  } else {
+    let myCode = makeReferralCode(name);
+    while (db.prepare('SELECT id FROM users WHERE referral_code = ?').get(myCode)) {
+      myCode = makeReferralCode(name);
+    }
+    // points = 0, pas de bonus de bienvenue : ce compte ne joue jamais.
+    const info = db.prepare(
+      'INSERT INTO users (phone, name, password_hash, points, referral_code, phone_verified) VALUES (?, ?, ?, 0, ?, 0)'
+    ).run(phone, name, hash, myCode);
+    userId = info.lastInsertRowid;
+  }
+
+  const agentCode = uniqueAgentCode(lastName, firstName, userId);
+  const capital = getAgentCapitalHtg();
+  const existingAgent = db.prepare('SELECT id FROM agents WHERE user_id = ?').get(userId);
+  if (!existingAgent) {
+    db.prepare(
+      `INSERT INTO agents (user_id, last_name, first_name, birth_date, id_type, id_number, agent_code, capital_htg)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+    ).run(userId, lastName, firstName, birthDate, idType, String(idNumber).trim(), agentCode, capital);
+  } else {
+    db.prepare(
+      `UPDATE agents SET last_name=?, first_name=?, birth_date=?, id_type=?, id_number=?, agent_code=?,
+       status='pending', capital_htg=?, applied_at=datetime('now'), approved_at=NULL WHERE id=?`
+    ).run(lastName, firstName, birthDate, idType, String(idNumber).trim(), agentCode, capital, existingAgent.id);
+  }
+
+  const otp = await issueOtp(phone, 'verify_phone', 'Confirmez la création de mon compte agent Konkou.');
+  if (!otp.ok) {
+    return { status: 429, data: { error: otp.error } };
+  }
+
+  return {
+    status: 200,
+    data: {
+      pendingVerification: true,
+      phone,
+      purpose: 'verify_phone',
+      code: otp.code,
+      whatsappLink: otp.whatsappLink,
+      message: whatsappMessage(otp.whatsappLink, 'Candidature agent enregistrée. Confirmez via WhatsApp pour l’activer.', 'Candidature enregistrée')
     }
   };
 }

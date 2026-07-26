@@ -1,13 +1,15 @@
 import db from '../db.js';
 import { verifyPassword } from '../utils.js';
 
-// Shared safety check for both self-service and admin-triggered deletion: a deletion
-// must never silently orphan money the platform or another player is still owed.
-// Returns a human-readable blocking reason, or null if it's safe to delete.
+// Shared safety check for both self-service and admin-triggered deletion. Points are
+// NOT a blocking condition (see performDelete) — a non-zero balance is simply forfeited
+// on deletion, by design, so it never traps a user who wants to leave. What DOES still
+// block: anything that would silently orphan money the platform or another player is
+// still owed (a pending cashout/deposit references this user_id and would become
+// unpayable/untraceable once the row is gone), or an active agent role (real credit and
+// commissions in play, not just points). Returns a human-readable blocking reason, or
+// null if it's safe to delete.
 function blockingReason(user) {
-  if (user.points > 0) {
-    return `Solde non nul (${user.points} points) — retirez le solde avant de supprimer le compte.`;
-  }
   const pendingCashout = db.prepare(`SELECT id FROM cashouts WHERE user_id = ? AND status = 'pending'`).get(user.id);
   if (pendingCashout) return 'Un retrait est en attente sur ce compte — attendez qu\'il soit payé ou rejeté avant de supprimer.';
 
@@ -23,14 +25,20 @@ function blockingReason(user) {
 
 // Any agent row still attached to the user at this point is necessarily pending or
 // rejected (an 'active' one would have blocked deletion above), meaning it never held
-// real credit/commission — safe to remove alongside the user account.
+// real credit/commission — safe to remove alongside the user account. Points are not
+// explicitly zeroed first: deleting the users row eliminates them along with everything
+// else on the account, they are not refunded or transferred anywhere. The phone number
+// itself is freed immediately (UNIQUE constraint on users.phone) and can register a
+// brand new account right away, starting from zero.
 function performDelete(userId) {
   db.prepare('DELETE FROM agents WHERE user_id = ?').run(userId);
   db.prepare('DELETE FROM users WHERE id = ?').run(userId);
 }
 
 // Self-service deletion — requires re-entering the password as a confirmation step for
-// this irreversible action, same as most apps do for account deletion.
+// this irreversible action, same as most apps do for account deletion. The frontend is
+// expected to warn the user beforehand that any remaining points will be lost (see
+// app.js) ; this is the actual point of no return once that password is accepted.
 export function deleteMyAccount(userId, body) {
   const user = db.prepare('SELECT * FROM users WHERE id = ?').get(userId);
   if (!user) return { status: 404, data: { error: 'Compte introuvable' } };
@@ -43,8 +51,16 @@ export function deleteMyAccount(userId, body) {
   const reason = blockingReason(user);
   if (reason) return { status: 409, data: { error: reason } };
 
+  const pointsLost = user.points;
   performDelete(user.id);
-  return { status: 200, data: { message: 'Compte supprimé.' } };
+  return {
+    status: 200,
+    data: {
+      message: pointsLost > 0
+        ? `Compte supprimé. ${pointsLost} points ont été définitivement perdus.`
+        : 'Compte supprimé.'
+    }
+  };
 }
 
 // Lets the admin panel show account details (points, agent role/status) before deleting,
@@ -77,6 +93,14 @@ export function adminDeleteAccount(body) {
   const reason = blockingReason(user);
   if (reason) return { status: 409, data: { error: reason } };
 
+  const pointsLost = user.points;
   performDelete(user.id);
-  return { status: 200, data: { message: `Compte de ${user.name} (${user.phone}) supprimé.` } };
+  return {
+    status: 200,
+    data: {
+      message: pointsLost > 0
+        ? `Compte de ${user.name} (${user.phone}) supprimé. ${pointsLost} points ont été définitivement perdus.`
+        : `Compte de ${user.name} (${user.phone}) supprimé.`
+    }
+  };
 }
