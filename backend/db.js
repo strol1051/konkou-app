@@ -149,6 +149,27 @@ CREATE TABLE IF NOT EXISTS agent_refills (
   processed_at TEXT
 );
 
+-- Abonnement VIP payant (juillet 2026, revue de rentabilité) : un joueur paie
+-- VIP_PRICE_HTG en espèces chez un agent (comme un dépôt) pour VIP_DURATION_DAYS jours
+-- d'avantages (plus de parties gratuites/jour — voir routes/games.js, playAllowance).
+-- Contrairement aux dépôts, ce montant n'est PAS déduit du crédit revendable de
+-- l'agent : c'est un produit propre à la plateforme, l'agent n'est qu'un point de
+-- collecte du paiement en espèces (à vous remettre intégralement, hors app, comme le
+-- reste de la comptabilité agent). "amount_htg" est donc entièrement le revenu de
+-- Konkou une fois confirmé, contrairement à platform_fee_htg sur les dépôts/retraits
+-- qui n'en représente qu'une partie.
+CREATE TABLE IF NOT EXISTS vip_purchases (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id INTEGER NOT NULL,
+  agent_id INTEGER,
+  amount_htg REAL NOT NULL,
+  duration_days INTEGER NOT NULL,
+  code TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'pending', -- pending | confirmed | rejected
+  requested_at TEXT DEFAULT (datetime('now')),
+  processed_at TEXT
+);
+
 -- Petite table clé/valeur pour les réglages modifiables par l'admin sans redéploiement
 -- (contrairement aux variables d'environnement comme OPERATOR_WHATSAPP_NUMBER, qui
 -- nécessitent de changer la config Render). Utilisée pour l'instant uniquement pour le
@@ -183,7 +204,15 @@ for (const stmt of [
   // getAgentCommissionByDay). Les lignes payées avant cette migration valent 0 ici —
   // le total historique affiché à l'agent reste basé sur agents.commission_earned,
   // qui lui a toujours été correctement incrémenté.
-  "ALTER TABLE cashouts ADD COLUMN commission_htg REAL NOT NULL DEFAULT 0"
+  "ALTER TABLE cashouts ADD COLUMN commission_htg REAL NOT NULL DEFAULT 0",
+  // Frais de service sur les dépôts (juillet 2026, revue de rentabilité) — même principe
+  // que platform_fee_htg sur les cashouts : figé au moment du dépôt, réduit le nombre de
+  // parties bonus accordées (deposits.plays_granted) sans toucher au crédit débité chez
+  // l'agent (voir routes/deposits.js, postDeposit).
+  "ALTER TABLE deposits ADD COLUMN platform_fee_htg REAL NOT NULL DEFAULT 0",
+  // Date jusqu'à laquelle un compte joueur est VIP (NULL = jamais été VIP, ou expiré et
+  // pas encore renouvelé) — voir vip_purchases ci-dessus et routes/vip.js.
+  "ALTER TABLE users ADD COLUMN vip_until TEXT"
 ]) {
   try { db.exec(stmt); } catch { /* column already exists */ }
 }

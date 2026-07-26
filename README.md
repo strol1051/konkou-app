@@ -37,12 +37,16 @@ Sur mobile, ouvrez l'URL dans Chrome puis choisissez "Ajouter à l'écran d'accu
 | `MIN_CASHOUT_HTG` | Montant minimum (en HTG) pour demander un retrait | 500 |
 | `MAX_DAILY_CASHOUT_HTG` | Plafond de retrait par joueur et par jour (en HTG) | 10000 |
 | `PICKUP_LOCATION_INFO` | Texte affiché au joueur expliquant où/comment récupérer son argent en espèces | phrase générique |
-| `CASHOUT_FEE_TIER1_MAX_HTG` / `CASHOUT_FEE_TIER1_PERCENT` | Plafond et taux du 1er palier de frais de retrait | 2000 / 5 |
-| `CASHOUT_FEE_TIER2_MAX_HTG` / `CASHOUT_FEE_TIER2_PERCENT` | Plafond et taux du 2e palier de frais de retrait | 5000 / 6 |
-| `CASHOUT_FEE_TIER3_PERCENT` | Taux du 3e palier (au-delà de `CASHOUT_FEE_TIER2_MAX_HTG`, jusqu'à `MAX_DAILY_CASHOUT_HTG`) | 8 |
+| `CASHOUT_FEE_TIER1_MAX_HTG` / `CASHOUT_FEE_TIER1_PERCENT` | Plafond et taux du 1er palier de frais de retrait | 2000 / 12 |
+| `CASHOUT_FEE_TIER2_MAX_HTG` / `CASHOUT_FEE_TIER2_PERCENT` | Plafond et taux du 2e palier de frais de retrait | 5000 / 14 |
+| `CASHOUT_FEE_TIER3_PERCENT` | Taux du 3e palier (au-delà de `CASHOUT_FEE_TIER2_MAX_HTG`, jusqu'à `MAX_DAILY_CASHOUT_HTG`) | 16 |
 | `MIN_DEPOSIT_HTG` / `MAX_DEPOSIT_HTG` | Bornes d'un dépôt chez l'agent (achat de parties bonus) | 100 / 2500 |
 | `HTG_PER_BONUS_PLAY` | Combien de HTG déposés donnent 1 partie bonus | 50 |
 | `DEPOSIT_LOCATION_INFO` | Texte affiché au joueur expliquant comment finaliser un dépôt chez l'agent | phrase générique |
+| `DEPOSIT_FEE_PERCENT` | Frais de service prélevé sur chaque dépôt, avant de calculer les parties bonus accordées | 5 |
+| `VIP_PRICE_HTG` | Prix en HTG d'un abonnement VIP (payé en espèces chez un agent) | 300 |
+| `VIP_DURATION_DAYS` | Durée en jours d'un abonnement VIP | 30 |
+| `VIP_EXTRA_DAILY_PLAYS` | Parties gratuites supplémentaires par jour et par jeu accordées à un VIP actif | 10 |
 | `AGENT_CAPITAL_HTG` | Capital que doit déposer un candidat agent pour être activé | 7500 |
 | `AGENT_CAPITAL_FEE_PERCENT` | Part de ce capital gardée par Konkou (le reste devient le crédit de l'agent) | 10 |
 | `AGENT_CASHOUT_COMMISSION_PERCENT` | Commission qu'un agent gagne sur chaque retrait qu'il paie | 10 |
@@ -56,19 +60,21 @@ Sur mobile, ouvrez l'URL dans Chrome puis choisissez "Ajouter à l'écran d'accu
 - Inscription/connexion par numéro de téléphone, mot de passe (hashé avec scrypt), session par jeton signé (type JWT).
 - **Confirmation par WhatsApp** (inscription + mot de passe oublié) : voir section dédiée ci-dessous — remplace l'envoi de SMS tant qu'aucun fournisseur SMS n'est branché.
 - Bonus de bienvenue : 100 points à l'inscription.
-- Deux jeux d'habileté : quiz de culture générale (5 questions/partie, tirées d'une banque de 100 — géographie, histoire, sciences, sport, arts, mathématiques, avec une dizaine de questions sur Haïti) et sprint de calcul mental (8 opérations/partie), limités à 30 parties gratuites/jour chacun — au-delà, un joueur peut continuer en utilisant une **partie bonus** (voir "Dépôts" ci-dessous).
+- Deux jeux d'habileté : quiz de culture générale (5 questions/partie, tirées d'une banque de 160 — géographie, histoire, sciences, sport, arts, mathématiques, avec une dizaine de questions sur Haïti et 60 questions saisonnières, voir "Questions saisonnières" plus bas) et sprint de calcul mental (8 opérations/partie), limités à 15 parties gratuites/jour chacun — au-delà, un joueur peut continuer en utilisant une **partie bonus** (voir "Dépôts" ci-dessous).
 - **Mise optionnelle avant de jouer** : le joueur peut engager entre 100 et 2500 de ses points (dans la limite de son solde) avant une partie — voir "Mise sur sa performance" ci-dessous pour le fonctionnement exact et l'avertissement légal associé.
 - Portefeuille : solde de points, valeur estimée en HTG, historique des transactions.
-- **Retrait cash par code, avec limites et frais de service par palier** : le joueur demande un retrait (minimum `MIN_CASHOUT_HTG`, plafond `MAX_DAILY_CASHOUT_HTG` par jour), l'app génère un code unique à présenter à un point de retrait physique pour recevoir l'argent en espèces. Un frais de service — 5% jusqu'à 2000 HTG, 6% de 2001 à 5000 HTG, 8% au-delà — est prélevé sur le montant demandé et gardé par Konkou ; le joueur voit clairement le montant brut, le frais et le net à recevoir avant de confirmer. Ce frais est distinct de la commission de l'agent (voir "Réseau d'agents"), qui reste calculée sur le montant brut. Aucun intermédiaire financier requis.
-- **Dépôt chez l'agent pour des parties bonus** : le joueur peut déposer entre `MIN_DEPOSIT_HTG` et `MAX_DEPOSIT_HTG` (autant de fois qu'il veut) pour acheter des parties bonus (`HTG_PER_BONUS_PLAY` HTG = 1 partie). **Achat à sens unique** : cet argent n'est jamais reconvertible en points retirables, il sert uniquement à débloquer des parties au-delà de la limite gratuite — voir "Pourquoi les dépôts ne sont pas retirables" ci-dessous.
+- **Retrait cash par code, avec limites et frais de service par palier** : le joueur demande un retrait (minimum `MIN_CASHOUT_HTG`, plafond `MAX_DAILY_CASHOUT_HTG` par jour), l'app génère un code unique à présenter à un point de retrait physique pour recevoir l'argent en espèces. Un frais de service — 12% jusqu'à 2000 HTG, 14% de 2001 à 5000 HTG, 16% au-delà — est prélevé sur le montant demandé et gardé par Konkou ; le joueur voit clairement le montant brut, le frais et le net à recevoir avant de confirmer. Ce frais est distinct de la commission de l'agent (voir "Réseau d'agents"), qui reste calculée sur le montant brut — voir "Comment Konkou génère du revenu" plus bas pour l'importance de garder ce frais au-dessus de la commission agent.
+- **Dépôt chez l'agent pour des parties bonus, avec frais de service** : le joueur peut déposer entre `MIN_DEPOSIT_HTG` et `MAX_DEPOSIT_HTG` (autant de fois qu'il veut) pour acheter des parties bonus (`HTG_PER_BONUS_PLAY` HTG = 1 partie). Un frais de service de `DEPOSIT_FEE_PERCENT` % (5% par défaut) est prélevé sur le montant avant de calculer les parties accordées — le joueur voit clairement le montant versé, le frais et les parties bonus obtenues avant de confirmer. **Achat à sens unique** : cet argent n'est jamais reconvertible en points retirables, il sert uniquement à débloquer des parties au-delà de la limite gratuite — voir "Pourquoi les dépôts ne sont pas retirables" ci-dessous.
+- **Abonnement VIP payant** : pour `VIP_PRICE_HTG` HTG (300 par défaut) payés en espèces chez un agent, comme un dépôt, un joueur devient VIP pendant `VIP_DURATION_DAYS` jours (30 par défaut) et gagne `VIP_EXTRA_DAILY_PLAYS` (10 par défaut) parties gratuites supplémentaires par jour et par jeu, en plus des parties bonus. Renouveler avant l'échéance prolonge la date d'expiration au lieu de la remettre à zéro — voir "Abonnement VIP" ci-dessous.
 - **Réseau d'agents, avec renflouement de capital** : inscription agent séparée de l'inscription joueur, sans aucun accès aux fonctionnalités joueur (voir section dédiée ci-dessous). Un agent revend des parties bonus et paie les retraits des autres joueurs, en échange d'une commission — les dépôts et retraits demandent désormais le code d'un agent actif. Un agent actif peut aussi demander un renflouement de capital (jusqu'à 25% de plus que son dernier dépôt, avec 7% de frais retenus par Konkou) pour augmenter progressivement son crédit revendable.
-- **Interface centrale** (`/admin.html`, protégée par `ADMIN_PASSWORD`), en huit onglets :
+- **Interface centrale** (`/admin.html`, protégée par `ADMIN_PASSWORD`), en neuf onglets :
   - *Retraits* : payer/rejeter les demandes de retrait cash (override de secours — voir "Réseau d'agents").
   - *Vérifications* : confirmer **ou refuser** les inscriptions/réinitialisations reçues par WhatsApp — deux sous-onglets, "Inscriptions" (nouveaux comptes) et "Réinitialisations" (mots de passe oubliés), voir "Confirmation par WhatsApp" plus bas.
   - *Dépôts* : confirmer/rejeter les dépôts (override de secours).
+  - *VIP* : confirmer/rejeter les achats d'abonnement VIP (override de secours) — voir "Abonnement VIP" ci-dessous.
   - *Agents* : approuver/rejeter les candidatures agent (identité + numéro de pièce + réception du capital de 7500 HTG).
   - *Renflouements* : confirmer/rejeter les demandes de renflouement de capital agent.
-  - *Revenus* : tableau de bord du revenu total de la plateforme, détaillé par source (frais de capital agent, frais de renflouement, frais de service sur les retraits), avec un sélecteur pour n'afficher que les revenus d'un jour précis.
+  - *Revenus* : tableau de bord du revenu total de la plateforme, détaillé par source (frais de capital agent, frais de renflouement, frais de service sur les retraits, frais de service sur les dépôts, ventes VIP), avec un sélecteur pour n'afficher que les revenus d'un jour précis.
   - *Comptes* : rechercher un compte (agent ou joueur) par numéro de téléphone et le supprimer définitivement — voir "Suppression de compte" ci-dessous.
   - *Réglages* : définir/modifier le numéro WhatsApp qui reçoit les messages de "Nous contacter", choisir le thème saisonnier de l'app, personnaliser la couleur/photo de fond et le logo — voir "Thème saisonnier de l'app" ci-dessous.
 - **Mot de passe visible à la demande** : un bouton "œil" sur tous les champs mot de passe (connexion, inscription, mot de passe oublié, suppression de compte, connexion admin) permet de basculer entre masqué et affiché en clair, pour éviter les erreurs de frappe.
@@ -111,12 +117,14 @@ Avant de lancer une partie (quiz ou sprint), un joueur peut optionnellement mise
 **Comment le résultat est calculé** : à la fin de la partie, le ratio de bonnes réponses (`bonnes réponses / total`) détermine un multiplicateur continu appliqué à la mise, sans seuil de réussite/échec net :
 
 ```
-multiplicateur = 0,7 + 0,6 × ratio
+multiplicateur = 0,85 + 0,3 × ratio
 ```
 
-- Score de 0% → multiplicateur 0,7 → la mise perd 30%.
+- Score de 0% → multiplicateur 0,85 → la mise perd 15%.
 - Score de 50% → multiplicateur 1,0 → la mise revient inchangée.
-- Score de 100% → multiplicateur 1,3 → la mise gagne 30%.
+- Score de 100% → multiplicateur 1,15 → la mise gagne 15%.
+
+*(Fourchette resserrée en juillet 2026 — elle était de ±30% à l'origine ; voir "Comment Konkou génère du revenu" ci-dessous pour le raisonnement.)*
 
 Ce résultat de mise est **entièrement séparé** des points normaux gagnés par bonne réponse (10 pts/question au quiz, 6 pts/calcul au sprint), qui restent inchangés avec ou sans mise — la mise est un mécanisme additionnel, pas un remplacement. Le solde ne peut jamais descendre sous zéro (garde-fou appliqué côté serveur), et une partie abandonnée sans être soumise n'a aucun effet sur la mise (rien n'est débité tant que la partie n'est pas notée).
 
@@ -143,7 +151,7 @@ Le parcours :
 1. **Inscription** : téléphone, mot de passe, nom, prénom, date de naissance (l'app vérifie 18 ans ou plus), type de pièce d'identité (CIN, passeport ou permis) et son numéro, **ville et adresse** — tout en une seule fois, sur l'écran d'inscription agent (les deux champs sont obligatoires, même règle sur le formulaire "Devenir Agent" rempli depuis un compte joueur existant). Comme pour un joueur, une confirmation par WhatsApp est requise (`/admin.html` → *Vérifications* → *Inscriptions*, même file d'attente que les joueurs) avant que le compte soit utilisable. L'app génère un **code agent** à partir de 3 lettres du nom + 2 lettres du prénom (ex. Pierre Louis → `PIELO`) — un suffixe numérique est ajouté en cas de collision avec un code déjà pris. La ville et l'adresse sont ensuite affichées à l'admin (`/admin.html` → *Agents*) et, une fois le compte actif, dans les "Infos Agent" que voit le joueur lors d'une demande de dépôt/retrait (voir point 3).
 2. **Dépôt du capital** : le candidat apporte `AGENT_CAPITAL_HTG` (7500 HTG par défaut) à votre bureau. Dans `/admin.html`, onglet *Agents*, vous vérifiez son identité et confirmez avoir reçu le capital en cliquant "Approuver" — l'app crédite alors automatiquement `100 - AGENT_CAPITAL_FEE_PERCENT` % de ce montant (6750 HTG par défaut) comme **crédit revendable** sur son compte agent ; le reste (10%) reste acquis à la plateforme.
 3. **Vente de crédit** : un joueur qui veut acheter des parties bonus choisit un agent dans une liste déroulante (nom, code, numéro d'agent) sur le formulaire de dépôt — plus besoin de connaître/taper un code à l'avance. Dès qu'il sélectionne un agent, un encart "📍 Infos agent" apparaît sous la liste avec la ville et l'adresse enregistrées par cet agent, pour que le joueur sache clairement où il va effectuer sa transaction avant de valider sa demande (même encart sur le formulaire de retrait, voir point 4). L'agent se connecte avec son propre numéro/mot de passe agent, atterrit directement sur son tableau de bord, et clique "✅ Confirmer" sur le dépôt correspondant — son crédit revendable diminue du montant, et le joueur reçoit ses parties bonus. Une confirmation est refusée si le crédit de l'agent est insuffisant.
-4. **Paiement des retraits** : de la même façon, un joueur qui demande un retrait choisit un agent dans la même liste déroulante (avec le même encart "Infos agent"). Sur son tableau de bord, l'agent clique "✅ Payer" — il gagne alors `AGENT_CASHOUT_COMMISSION_PERCENT` % du montant **brut** demandé par le joueur (10% par défaut). Le frais de service par palier (voir "Retrait cash" ci-dessus) est séparé : il est prélevé sur ce que le joueur reçoit, pas sur la base de calcul de la commission de l'agent. **Ce compteur reste purement informatif** : aucun paiement automatique n'a lieu dans l'app, vous réglez cette commission à l'agent par vos propres moyens, périodiquement. Le tableau de bord de l'agent affiche désormais son nom complet, son numéro d'agent, son crédit revendable et une carte "💰 Commission sur retraits" avec un sélecteur de date (borné entre le jour d'activation de son compte et aujourd'hui) pour qu'il puisse vérifier ce qu'il a gagné un jour précis, en plus du total cumulé depuis toujours.
+4. **Paiement des retraits** : de la même façon, un joueur qui demande un retrait choisit un agent dans la même liste déroulante (avec le même encart "Infos agent"). Sur son tableau de bord, l'agent clique "✅ Payer" — il gagne alors `AGENT_CASHOUT_COMMISSION_PERCENT` % du montant **brut** demandé par le joueur (10% par défaut). Le frais de service par palier (voir "Retrait cash" ci-dessus, 12/14/16%) est séparé : il est prélevé sur ce que le joueur reçoit, pas sur la base de calcul de la commission de l'agent — **le frais reste volontairement au-dessus de la commission agent à chaque palier**, pour que chaque retrait dégage une marge nette pour vous plutôt qu'une perte (voir "Comment Konkou génère du revenu" plus bas). **Ce compteur reste purement informatif** : aucun paiement automatique n'a lieu dans l'app, vous réglez cette commission à l'agent par vos propres moyens, périodiquement. Le tableau de bord de l'agent affiche désormais son nom complet, son numéro d'agent, son crédit revendable et une carte "💰 Commission sur retraits" avec un sélecteur de date (borné entre le jour d'activation de son compte et aujourd'hui) pour qu'il puisse vérifier ce qu'il a gagné un jour précis, en plus du total cumulé depuis toujours.
 5. **Renflouement de capital** : depuis son tableau de bord, un agent actif peut demander à augmenter son crédit revendable au-delà du dépôt initial. Le plafond d'un renflouement est `AGENT_REFILL_GROWTH_PERCENT` % (25% par défaut) du montant de son *dernier* dépôt confirmé — un plafond qui grandit donc à chaque renflouement réussi, comme une ligne de crédit progressive. Konkou retient `AGENT_REFILL_FEE_PERCENT` % (7% par défaut) du montant déposé ; le reste est ajouté au crédit revendable une fois que vous confirmez la réception du dépôt dans `/admin.html` (onglet *Renflouements*), suivant exactement le même principe de remise en main propre + confirmation qu'un dépôt initial.
 
 ⚠️ **Comptes agent déjà créés avant ce changement** : si un compte qui a déjà joué (points, historique...) a été promu agent via l'ancien parcours (Profil → Espace Agent), il bascule automatiquement vers l'interface agent-only à sa prochaine connexion — ses éventuels points restent dans la base mais deviennent inaccessibles (portefeuille bloqué), puisqu'il ne peut plus se voir comme joueur. Si ce cas se présente avec un vrai compte, réglez son solde manuellement (ou via l'onglet *Comptes* de `/admin.html`) avant qu'il ne devienne agent, plutôt qu'après.
@@ -154,17 +162,35 @@ La liste déroulante (`GET /api/agents/list`) ne montre que les agents actifs (n
 
 ## Comment Konkou génère du revenu
 
-Le joueur, lui, gagne `POINTS_TO_HTG_RATE` HTG par point (0,08 HTG/pt par défaut — relevé depuis 0,05 pour rendre le jeu plus attractif). Konkou a trois sources de revenu récurrentes, toutes automatiquement additionnées dans `/admin.html` (onglet *Revenus*) :
+Le joueur, lui, gagne `POINTS_TO_HTG_RATE` HTG par point (0,08 HTG/pt par défaut). Konkou a cinq sources de revenu récurrentes, toutes automatiquement additionnées dans `/admin.html` (onglet *Revenus*) :
 
 1. **Frais de capital agent** : `AGENT_CAPITAL_FEE_PERCENT` % (10% par défaut) du capital initial de chaque nouvel agent — 750 HTG sur les 7500 HTG par défaut. Ponctuel par agent, à l'inscription.
 2. **Frais de renflouement agent** : `AGENT_REFILL_FEE_PERCENT` % (7% par défaut) de chaque renflouement de capital qu'un agent demande ensuite — une source récurrente, puisqu'un agent actif peut renflouer régulièrement (voir "Réseau d'agents").
-3. **Frais de service sur les retraits** : prélevé sur chaque retrait joueur, par palier — 5% jusqu'à 2000 HTG, 6% de 2001 à 5000 HTG, 8% au-delà (jusqu'au plafond quotidien de `MAX_DAILY_CASHOUT_HTG`). C'est la source la plus directement liée au volume de joueurs actifs : plus il y a de retraits, plus elle rapporte.
+3. **Frais de service sur les retraits** : prélevé sur chaque retrait joueur, par palier — 12% jusqu'à 2000 HTG, 14% de 2001 à 5000 HTG, 16% au-delà (jusqu'au plafond quotidien de `MAX_DAILY_CASHOUT_HTG`). C'est la source la plus directement liée au volume de joueurs actifs : plus il y a de retraits, plus elle rapporte.
+4. **Frais de service sur les dépôts** : `DEPOSIT_FEE_PERCENT` % (5% par défaut) prélevé sur chaque dépôt avant de calculer les parties bonus accordées — voir "Fonctionnalités incluses" plus haut.
+5. **Ventes VIP** : contrairement aux quatre sources ci-dessus, qui ne sont qu'un pourcentage prélevé sur un montant, le montant **entier** d'un achat VIP (`VIP_PRICE_HTG`, 300 HTG par défaut) devient revenu de la plateforme une fois confirmé — voir "Abonnement VIP" ci-dessous pour le détail.
 
-Ces trois frais sont indépendants de la commission de l'agent (`AGENT_CASHOUT_COMMISSION_PERCENT`, 10% par défaut) : celle-ci reste calculée sur le montant brut du retrait et va entièrement à l'agent, elle ne réduit pas le revenu de Konkou. Chaque montant de frais est figé au moment de la transaction (pas recalculé après coup), donc changer un taux dans `.env` n'affecte que les futures transactions — l'historique des revenus reste exact même après un changement de configuration.
+Chaque montant de frais est figé au moment de la transaction (pas recalculé après coup), donc changer un taux dans `.env` n'affecte que les futures transactions — l'historique des revenus reste exact même après un changement de configuration.
+
+### ⚠️ Point de rentabilité corrigé (juillet 2026)
+
+Une revue de rentabilité a révélé un problème structurel qui a depuis été corrigé, et qu'il faut comprendre pour ne pas le réintroduire par erreur en changeant les paramètres plus tard :
+
+**Le frais de retrait doit toujours rester au-dessus de la commission agent (`AGENT_CASHOUT_COMMISSION_PERCENT`, 10% par défaut).** Ces deux pourcentages se calculent tous les deux sur le montant **brut** du même retrait, mais l'un est un revenu pour vous (le frais) et l'autre est un coût que vous payez à l'agent (la commission, réglée hors app). Avant cette correction, les paliers de frais (5/6/8%) étaient tous **inférieurs** à la commission (10%) — chaque retrait payé coûtait donc plus cher en commission qu'il ne rapportait en frais, une perte nette de 2 à 5% sur **chaque** retrait, qui s'aggravait avec le volume plutôt que de s'améliorer. Exemple concret sur un retrait de 1000 HTG brut, avant/après :
+
+| | Avant (frais 5%) | Après (frais 12%) |
+|---|---|---|
+| Frais encaissé (votre revenu) | 50 HTG | 120 HTG |
+| Commission due à l'agent (votre coût) | 100 HTG | 100 HTG |
+| **Marge nette pour vous** | **-50 HTG** | **+20 HTG** |
+
+Les nouveaux paliers (12/14/16%) dégagent une marge nette de 2 à 6 points au-dessus de la commission, à chaque tranche de montant.
+
+**Ceci reste distinct du coût du jeu gratuit.** Même avec cette correction, chaque point gagné gratuitement (10 pts/bonne réponse au quiz, 6 pts/bonne réponse au sprint) représente une valeur en HTG que vous devrez éventuellement payer si le joueur la retire — ce n'est ni un revenu ni compensé automatiquement par les frais ci-dessus. Deux réglages limitent ce passif : la limite quotidienne de parties gratuites (`DAILY_LIMIT` dans `backend/routes/games.js`, 15/jour/jeu depuis juillet 2026, contre 30 auparavant) et la fourchette de la mise sur sa performance (±15% depuis juillet 2026, contre ±30% — voir "Mise sur sa performance" plus haut). Les trois revenus listés ci-dessus doivent, sur la durée, dépasser la somme de : ce passif de jeu gratuit + le coût net de la mise (qui reste, en moyenne, légèrement défavorable pour vous si les joueurs répondent correctement plus de la moitié du temps) + vos coûts d'exploitation (hébergement, temps passé à confirmer les WhatsApp, etc.).
 
 **Revenus par jour.** En haut de l'onglet *Revenus*, un sélecteur de date permet de ne voir que les revenus collectés un jour précis plutôt que tout l'historique — la date la plus ancienne sélectionnable est celle du tout premier compte créé (joueur ou agent), affichée à côté du sélecteur. Techniquement : `GET /api/admin/revenue` accepte un paramètre `?date=YYYY-MM-DD` qui filtre chaque source de revenu sur la date de sa transaction (`approved_at` pour les frais de capital agent, `processed_at` pour les frais de renflouement et de retrait) ; sans paramètre, la réponse reste le total sur tout l'historique comme avant. Un bouton "Revenir à tout l'historique" efface le filtre.
 
-D'autres leviers non encore implémentés (publicité entre les parties, packs de questions sponsorisés par des commerces locaux) restent listés dans "Ce qu'il reste à faire avant un vrai lancement commercial" ci-dessous.
+D'autres leviers non encore implémentés (publicité entre les parties, packs de questions sponsorisés par des commerces locaux) restent listés dans "Ce qu'il reste à faire avant un vrai lancement commercial" ci-dessous — ce sont eux qui permettraient de vraiment financer le jeu gratuit plutôt que de simplement en limiter les dégâts.
 
 ## Confirmation par WhatsApp (inscription + mot de passe oublié)
 
@@ -205,6 +231,16 @@ La suppression reste **refusée** si l'une de ces conditions est vraie (parce qu
 ## Pourquoi les dépôts ne sont pas retirables
 
 Un dépôt chez l'agent achète des parties bonus, jamais des points retirables — c'est un choix délibéré, pas une limitation technique. Si l'argent déposé pouvait ensuite ressortir en espèces (même indirectement, via des points gagnés en jouant avec cet argent), Konkou ressemblerait à un système de mise/pari plutôt qu'à une app de récompenses basée sur la performance, ce qui changerait sa qualification légale (voir "Important sur le modèle choisi" en haut de ce document) et l'exposerait à des règles bien plus strictes. Les deux circuits — points gagnés en jouant (retirables) et parties achetées (non retirables) — sont donc gardés strictement séparés dans la base de données (`points` vs `bonus_plays`, `cashouts` vs `deposits`).
+
+## Abonnement VIP
+
+Depuis son Portefeuille, un joueur peut devenir VIP pour `VIP_PRICE_HTG` HTG (300 par défaut), payés en espèces chez un agent — exactement le même flux qu'un dépôt (code généré dans l'app, présenté avec le paiement, confirmé en personne par l'agent).
+
+**Ce que ça donne** : `VIP_EXTRA_DAILY_PLAYS` (10 par défaut) parties gratuites supplémentaires par jour et par jeu, en plus de la limite gratuite normale (15/jour/jeu) et des parties bonus achetées par dépôt — les trois se cumulent. L'abonnement dure `VIP_DURATION_DAYS` jours (30 par défaut) ; le renouveler **avant** l'échéance prolonge la date d'expiration existante au lieu de la remettre à zéro (renouveler à 10 jours de la fin ajoute bien 30 jours pleins, pas 30 jours à partir d'aujourd'hui).
+
+**Différence clé avec un dépôt** : un dépôt réduit le crédit revendable de l'agent (il "vend" une partie de son stock prépayé) ; un achat VIP n'y touche pas du tout — l'agent n'est ici qu'un point de collecte du paiement en espèces, à vous remettre intégralement en dehors de l'app, comme le reste de sa comptabilité (commissions, renflouements). Le montant complet d'un achat VIP confirmé est donc un revenu pur pour la plateforme (voir "Comment Konkou génère du revenu" plus haut), contrairement au frais de service sur les dépôts qui n'en représente qu'une fraction.
+
+Le joueur voit son statut VIP (actif jusqu'à quelle date, ou pas encore VIP), un formulaire de souscription/renouvellement, et son historique d'achats dans le Portefeuille. Côté agent, une carte "👑 Achats VIP à confirmer" apparaît sur le tableau de bord, à côté des dépôts et retraits à traiter. `/admin.html` garde une capacité de secours (onglet *VIP*) pour confirmer/rejeter directement, sans toucher au crédit de l'agent, comme pour les dépôts et retraits.
 
 ## Comment fonctionne le retrait cash — et comment brancher NatCash/MonCash plus tard
 
@@ -273,7 +309,7 @@ Cette application est un socle fonctionnel complet, pas un produit fini prêt po
 ### Limitations connues (non bloquantes, à garder en tête)
 
 - Le sprint de calcul mental annonce une limite de 45 secondes côté serveur, mais rien ne l'impose encore côté interface ni côté serveur — un joueur peut actuellement prendre tout son temps. À corriger si la dimension "rapidité" est importante pour vous.
-- La limite de "30 parties/jour" se réinitialise à minuit UTC, pas à minuit heure d'Haïti — concrètement le nouveau quota tombe en fin d'après-midi/soirée locale plutôt qu'à minuit. Facile à ajuster si vous voulez un vrai minuit local.
+- La limite de "15 parties/jour" se réinitialise à minuit UTC, pas à minuit heure d'Haïti — concrètement le nouveau quota tombe en fin d'après-midi/soirée locale plutôt qu'à minuit. Facile à ajuster si vous voulez un vrai minuit local.
 - **Corrigé (juillet 2026)** : le service worker (`frontend/sw.js`) servait l'app shell (`app.js`, `styles.css`...) en cache-first, ce qui figeait la version affichée pour toujours après la première visite — un joueur qui avait déjà ouvert l'app une fois ne voyait jamais les mises à jour, même après un redéploiement réussi. Passage en network-first (toujours la dernière version en ligne, le cache ne sert que hors-ligne) + changement du nom de cache (`konkou-shell-v2`) pour forcer une mise à jour immédiate chez les joueurs déjà visités.
 
 ## Revue de code (juillet 2026)
@@ -381,6 +417,24 @@ Testé de bout en bout via curl : `GET /api/theme` renvoie bien `topbarBgImage` 
 
 Testé : `icon.png` (512×512 PNG) servi avec `Content-Type: image/png` sur `/`, `manifest.json` reste un JSON valide référençant `icon.png`, `index.html` et `admin.html` chargent toujours (200).
 
+**Correction du modèle économique (juillet 2026).** Une revue de rentabilité a révélé que le frais de retrait (5/6/8% selon le palier) était systématiquement inférieur à la commission agent (10% fixe) — chaque retrait payé coûtait donc plus cher en commission qu'il ne rapportait en frais, une perte nette structurelle qui s'aggravait avec le volume de retraits plutôt que de s'améliorer. Trois ajustements en parallèle pour renverser la tendance, voir "Comment Konkou génère du revenu" plus haut pour le détail complet et un exemple chiffré :
+- **Frais de retrait relevés à 12/14/16%** (`CASHOUT_FEE_TIER1/2/3_PERCENT` dans `.env` et `render.yaml`), désormais au-dessus de la commission agent (10%) à chaque palier — chaque retrait dégage maintenant une marge nette de 2 à 6 points au lieu d'une perte de 2 à 5 points.
+- **Limite quotidienne de parties gratuites réduite à 15** (`DAILY_LIMIT` dans `backend/routes/games.js`, contre 30 auparavant) — réduit de moitié le plafond de points gagnables gratuitement par jour et par joueur, donc le passif maximal théorique par joueur très actif.
+- **Fourchette de la mise sur sa performance resserrée à ±15%** (contre ±30% auparavant, voir `stakeMultiplier()` dans `backend/routes/games.js`) — si les joueurs répondent correctement plus de la moitié du temps en moyenne, la mise crée en moyenne plus de points qu'elle n'en détruit à l'échelle de tous les joueurs ; resserrer la fourchette réduit cette volatilité de moitié sans retirer l'aspect ludique du mécanisme.
+
+Tous les textes visibles par le joueur ont été mis à jour en conséquence ("15 parties gratuites/jour", "±15%" dans les écrans Comment ça marche, Portefeuille et l'écran de mise avant une partie). Testé de bout en bout via curl : les trois paliers de frais recalculés correctement (12/14/16%, toujours au-dessus de la commission de 10%), la limite de 15 parties/jour appliquée (le 16e essai est refusé avec le message habituel, une partie bonus reste utilisable au-delà), et la nouvelle formule de mise validée à 0% (perte de 15% exacte), 50% (mise inchangée) et 100% (gain de 15% exact).
+
+⚠️ **Important pour le déploiement** : `render.yaml` ne s'applique qu'à la création initiale d'un service Render via "New +" → "Blueprint" — modifier ce fichier ne met **pas** à jour automatiquement les variables d'environnement d'un service déjà existant et actif comme `konkou.onrender.com`. Après avoir poussé ce changement, allez dans le **dashboard Render** → votre service → onglet *Environment*, et mettez à jour manuellement `CASHOUT_FEE_TIER1_PERCENT` (12), `CASHOUT_FEE_TIER2_PERCENT` (14) et `CASHOUT_FEE_TIER3_PERCENT` (16), puis redéployez (ou laissez Render redéployer automatiquement après le changement de variable). `DAILY_LIMIT` et la fourchette de mise, eux, sont codés en dur dans `games.js` — ils s'appliquent automatiquement dès que ce fichier est déployé, sans variable d'environnement à changer.
+
+**Frais sur les dépôts + Abonnement VIP payant (juillet 2026).** Deux nouvelles sources de revenu récurrentes, à la demande explicite de l'utilisateur ("l'app est conçue dans le but de gagner de l'argent") après la correction du point de rentabilité ci-dessus — voir "Comment Konkou génère du revenu" et "Abonnement VIP" plus haut pour le détail complet :
+- **Frais sur les dépôts** (`DEPOSIT_FEE_PERCENT`, 5% par défaut) : prélevé sur le montant déposé avant de calculer les parties bonus accordées (`backend/routes/deposits.js`, `postDeposit`) — le crédit débité chez l'agent reste inchangé (montant brut), seul le nombre de parties accordées au joueur en tient compte. Le montant du frais est figé sur chaque dépôt (`deposits.platform_fee_htg`, nouvelle colonne), comme les autres frais de la plateforme.
+- **Abonnement VIP payant** (`VIP_PRICE_HTG`/`VIP_DURATION_DAYS`/`VIP_EXTRA_DAILY_PLAYS`, 300 HTG / 30 jours / +10 parties par défaut) : nouvelle table `vip_purchases` et colonne `users.vip_until`, nouveau module `backend/routes/vip.js`, nouvel onglet *VIP* dans `/admin.html`, nouvelle carte "👑 Achats VIP à confirmer" côté agent. `backend/routes/games.js` (`playAllowance`) relève désormais la limite quotidienne gratuite de `VIP_EXTRA_DAILY_PLAYS` pour un joueur VIP actif, en plus des parties bonus déjà existantes.
+- L'onglet *Revenus* affiche désormais cinq sources au lieu de trois (les deux nouvelles : "Frais de service sur les dépôts" et "Ventes VIP"), toujours calculées dynamiquement depuis les transactions.
+
+Testé de bout en bout (scénarios directs sur les fonctions de route, équivalent à des appels API) : frais de dépôt calculé et persisté correctement (5% de 200 HTG → 10 HTG de frais, parties bonus calculées sur le net) ; double demande VIP en attente rejetée (409) ; VIP inactif avant confirmation, actif immédiatement après confirmation par l'agent ; crédit revendable de l'agent inchangé par un achat VIP (contrairement à un dépôt) ; limite quotidienne de parties relevée de 15 à 25 pour un joueur VIP actif (`remainingPlaysToday` le reflète) ; liste et revenus admin incluant bien les nouvelles sources (310 HTG = 300 de vente VIP + 10 de frais de dépôt sur le scénario de test) ; code agent invalide rejeté (400) sur dépôt et sur VIP ; rejet d'une demande VIP fonctionnel ; renouvellement VIP avant échéance ajoutant exactement 30 jours à la date d'expiration existante plutôt que de la remettre à zéro. Démarrage du serveur HTTP et routes `/api/admin/vip` et `/api/admin/revenue` vérifiées via curl.
+
+⚠️ **Important pour le déploiement** : comme pour les frais de retrait plus haut, `render.yaml` ne met pas à jour un service Render déjà existant. Après avoir poussé ce changement, ajoutez manuellement dans le dashboard Render → votre service → onglet *Environment* : `DEPOSIT_FEE_PERCENT` (5), `VIP_PRICE_HTG` (300), `VIP_DURATION_DAYS` (30), `VIP_EXTRA_DAILY_PLAYS` (10) — sans ces variables, le serveur utilise les mêmes valeurs par défaut codées en dur, donc l'app fonctionne quand même, mais vous ne pourrez pas les ajuster depuis Render sans les ajouter explicitement d'abord.
+
 ## Structure du projet
 
 ```
@@ -392,11 +446,11 @@ konkou-app/
 │   ├── otp.js                # génération/validation des codes à 6 chiffres + confirmation WhatsApp (inscription + reset)
 │   ├── sms.js                # point d'intégration pour un futur fournisseur SMS réel (non branché actuellement)
 │   ├── middleware/auth.js  # extraction de l'utilisateur (et de l'admin) depuis le jeton
-│   ├── routes/              # auth, jeux, portefeuille, dépôts, agents, compte (suppression), classement, profil, admin (retraits/vérifications/dépôts/agents/renflouements/revenus/comptes)
+│   ├── routes/              # auth, jeux, portefeuille, dépôts, vip, agents, compte (suppression), classement, profil, admin (retraits/vérifications/dépôts/vip/agents/renflouements/revenus/comptes)
 │   └── data/questions.json # banque de 160 questions du quiz : 100 générales + 60 saisonnières (voir "Mettre à jour la banque de questions")
 └── frontend/
     ├── index.html, app.js, styles.css   # app joueur
-    ├── admin.html, admin.js              # interface agent/gestionnaire (retraits, vérifications WhatsApp, dépôts, candidatures agent, renflouements, revenus)
+    ├── admin.html, admin.js              # interface agent/gestionnaire (retraits, vérifications WhatsApp, dépôts, VIP, candidatures agent, renflouements, revenus)
     ├── manifest.json, sw.js, icon.png   # config PWA (installable, mode hors-ligne partiel — voir note ci-dessous)
     ├── logo.png, logo-watermark.png       # wordmark (barre du haut / connexion) + version filigrane (fond d'écran)
 ```

@@ -334,6 +334,14 @@ export function getAgentDashboard(userId) {
      FROM agent_refills WHERE agent_id = ? ORDER BY id DESC`
   ).all(agent.id);
 
+  // Achats VIP à confirmer — même flux que pendingDeposits, mais sans crédit agent à
+  // vérifier (voir vip.js : le montant n'est jamais déduit du credit_balance de l'agent).
+  const pendingVip = db.prepare(`
+    SELECT v.id, v.amount_htg, v.duration_days, v.code, v.requested_at, u.name as user_name, u.phone as user_phone
+    FROM vip_purchases v JOIN users u ON u.id = v.user_id
+    WHERE v.agent_id = ? AND v.status = 'pending' ORDER BY v.requested_at ASC
+  `).all(agent.id);
+
   return {
     status: 200,
     data: {
@@ -353,6 +361,7 @@ export function getAgentDashboard(userId) {
       refillMinHtg: getRefillMinHtg(),
       pendingDeposits,
       pendingCashouts,
+      pendingVip,
       refills
     }
   };
@@ -440,6 +449,51 @@ export function agentRejectDeposit(userId, body) {
 
   db.prepare("UPDATE deposits SET status = 'rejected', processed_at = datetime('now') WHERE id = ?").run(id);
   return { status: 200, data: { message: 'Dépôt rejeté.' } };
+}
+
+// Confirme un achat VIP payé en espèces chez l'agent. Contrairement à
+// agentConfirmDeposit, ne touche PAS à agents.credit_balance — l'agent n'est qu'un point
+// de collecte, le montant est entièrement le revenu de la plateforme (voir vip.js et
+// getRevenueSummary dans admin.js). La nouvelle expiration part du plus tardif entre
+// maintenant et l'expiration actuelle, pour que renouveler avant l'échéance ajoute bien
+// duration_days de plus au lieu de faire repartir le compteur à zéro.
+export function agentConfirmVip(userId, body) {
+  const agent = requireActiveAgent(userId);
+  if (!agent) return { status: 403, data: { error: 'Compte agent introuvable ou non actif' } };
+  const id = parseInt(body?.id, 10);
+  if (!id) return { status: 400, data: { error: 'id requis' } };
+
+  const purchase = db.prepare('SELECT * FROM vip_purchases WHERE id = ?').get(id);
+  if (!purchase || purchase.agent_id !== agent.id) return { status: 404, data: { error: 'Achat VIP introuvable' } };
+  if (purchase.status !== 'pending') return { status: 409, data: { error: `Cet achat VIP est déjà "${purchase.status}"` } };
+
+  const user = db.prepare('SELECT vip_until FROM users WHERE id = ?').get(purchase.user_id);
+  const base = user?.vip_until && new Date(user.vip_until).getTime() > Date.now()
+    ? new Date(user.vip_until)
+    : new Date();
+  const newUntil = new Date(base.getTime() + purchase.duration_days * 24 * 60 * 60 * 1000);
+  const newUntilIso = newUntil.toISOString();
+
+  db.prepare("UPDATE vip_purchases SET status = 'confirmed', processed_at = datetime('now') WHERE id = ?").run(id);
+  db.prepare('UPDATE users SET vip_until = ? WHERE id = ?').run(newUntilIso, purchase.user_id);
+  db.prepare('INSERT INTO transactions (user_id, type, amount, note) VALUES (?, ?, ?, ?)')
+    .run(purchase.user_id, 'vip_confirmed', 0, `Abonnement VIP confirmé par l'agent ${agent.agent_code} — valide jusqu'au ${newUntilIso.slice(0, 10)} (code ${purchase.code})`);
+
+  return { status: 200, data: { message: 'Achat VIP confirmé.', vipUntil: newUntilIso } };
+}
+
+export function agentRejectVip(userId, body) {
+  const agent = requireActiveAgent(userId);
+  if (!agent) return { status: 403, data: { error: 'Compte agent introuvable ou non actif' } };
+  const id = parseInt(body?.id, 10);
+  if (!id) return { status: 400, data: { error: 'id requis' } };
+
+  const purchase = db.prepare('SELECT * FROM vip_purchases WHERE id = ?').get(id);
+  if (!purchase || purchase.agent_id !== agent.id) return { status: 404, data: { error: 'Achat VIP introuvable' } };
+  if (purchase.status !== 'pending') return { status: 409, data: { error: `Cet achat VIP est déjà "${purchase.status}"` } };
+
+  db.prepare("UPDATE vip_purchases SET status = 'rejected', processed_at = datetime('now') WHERE id = ?").run(id);
+  return { status: 200, data: { message: 'Achat VIP rejeté.' } };
 }
 
 export function agentPayCashout(userId, body) {

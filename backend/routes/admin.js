@@ -305,6 +305,63 @@ export function rejectAgentRefill(body) {
   return { status: 200, data: { message: 'Renflouement rejeté.' } };
 }
 
+// ---------- Achats VIP ----------
+// Même logique de confirmation en personne que les dépôts/renflouements, mais sans
+// crédit agent à débiter/créditer — voir routes/agents.js agentConfirmVip pour le détail
+// du calcul de la nouvelle date d'expiration (vip_until).
+
+export function listVipPurchases(statusFilter) {
+  const status = ['pending', 'confirmed', 'rejected'].includes(statusFilter) ? statusFilter : 'pending';
+  const rows = db.prepare(`
+    SELECT v.id, v.amount_htg, v.duration_days, v.code, v.status, v.requested_at, v.processed_at,
+           u.name as user_name, u.phone as user_phone, a.agent_code
+    FROM vip_purchases v
+    JOIN users u ON u.id = v.user_id
+    LEFT JOIN agents a ON a.id = v.agent_id
+    WHERE v.status = ?
+    ORDER BY v.requested_at ASC
+  `).all(status);
+  return { status: 200, data: { status, vipPurchases: rows } };
+}
+
+export function confirmVipPurchase(body) {
+  const id = parseInt(body?.id, 10);
+  if (!id) return { status: 400, data: { error: 'id requis' } };
+
+  const purchase = db.prepare('SELECT * FROM vip_purchases WHERE id = ?').get(id);
+  if (!purchase) return { status: 404, data: { error: 'Achat VIP introuvable' } };
+  if (purchase.status !== 'pending') {
+    return { status: 409, data: { error: `Cet achat VIP est déjà "${purchase.status}"` } };
+  }
+
+  const user = db.prepare('SELECT vip_until FROM users WHERE id = ?').get(purchase.user_id);
+  const base = user?.vip_until && new Date(user.vip_until).getTime() > Date.now()
+    ? new Date(user.vip_until)
+    : new Date();
+  const newUntilIso = new Date(base.getTime() + purchase.duration_days * 24 * 60 * 60 * 1000).toISOString();
+
+  db.prepare("UPDATE vip_purchases SET status = 'confirmed', processed_at = datetime('now') WHERE id = ?").run(id);
+  db.prepare('UPDATE users SET vip_until = ? WHERE id = ?').run(newUntilIso, purchase.user_id);
+  db.prepare('INSERT INTO transactions (user_id, type, amount, note) VALUES (?, ?, ?, ?)')
+    .run(purchase.user_id, 'vip_confirmed', 0, `Abonnement VIP confirmé — valide jusqu'au ${newUntilIso.slice(0, 10)} (code ${purchase.code})`);
+
+  return { status: 200, data: { message: 'Achat VIP confirmé.', vipUntil: newUntilIso } };
+}
+
+export function rejectVipPurchase(body) {
+  const id = parseInt(body?.id, 10);
+  if (!id) return { status: 400, data: { error: 'id requis' } };
+
+  const purchase = db.prepare('SELECT * FROM vip_purchases WHERE id = ?').get(id);
+  if (!purchase) return { status: 404, data: { error: 'Achat VIP introuvable' } };
+  if (purchase.status !== 'pending') {
+    return { status: 409, data: { error: `Cet achat VIP est déjà "${purchase.status}"` } };
+  }
+
+  db.prepare("UPDATE vip_purchases SET status = 'rejected', processed_at = datetime('now') WHERE id = ?").run(id);
+  return { status: 200, data: { message: 'Achat VIP rejeté.' } };
+}
+
 // ---------- Résumé des revenus plateforme ----------
 // Everything here is derived straight from source tables rather than a separately
 // maintained running counter, so it can never drift out of sync: capital fees are
@@ -333,8 +390,19 @@ export function getRevenueSummary(dateFilter) {
     ? db.prepare(`SELECT COALESCE(SUM(platform_fee_htg), 0) as total, COUNT(*) as count FROM cashouts WHERE status = 'paid' AND date(processed_at) = ?`).get(validDate)
     : db.prepare(`SELECT COALESCE(SUM(platform_fee_htg), 0) as total, COUNT(*) as count FROM cashouts WHERE status = 'paid'`).get();
 
+  const depositFees = validDate
+    ? db.prepare(`SELECT COALESCE(SUM(platform_fee_htg), 0) as total, COUNT(*) as count FROM deposits WHERE status = 'confirmed' AND date(processed_at) = ?`).get(validDate)
+    : db.prepare(`SELECT COALESCE(SUM(platform_fee_htg), 0) as total, COUNT(*) as count FROM deposits WHERE status = 'confirmed'`).get();
+
+  // amount_htg est ici intégralement le revenu de la plateforme (contrairement aux
+  // autres sources, qui ne sont qu'un pourcentage prélevé) — voir vip_purchases dans
+  // db.js et le commentaire de agentConfirmVip dans routes/agents.js.
+  const vipSales = validDate
+    ? db.prepare(`SELECT COALESCE(SUM(amount_htg), 0) as total, COUNT(*) as count FROM vip_purchases WHERE status = 'confirmed' AND date(processed_at) = ?`).get(validDate)
+    : db.prepare(`SELECT COALESCE(SUM(amount_htg), 0) as total, COUNT(*) as count FROM vip_purchases WHERE status = 'confirmed'`).get();
+
   const r2 = (n) => Math.round(n * 100) / 100;
-  const totalRevenue = r2(agentCapitalFees.total + agentRefillFees.total + cashoutFees.total);
+  const totalRevenue = r2(agentCapitalFees.total + agentRefillFees.total + cashoutFees.total + depositFees.total + vipSales.total);
 
   // Premier compte jamais créé (joueur ou agent, les deux vivent dans "users") — borne
   // min du sélecteur de date côté admin, comme demandé.
@@ -350,7 +418,9 @@ export function getRevenueSummary(dateFilter) {
       breakdown: {
         agentCapitalFees: { totalHtg: r2(agentCapitalFees.total), count: agentCapitalFees.count },
         agentRefillFees: { totalHtg: r2(agentRefillFees.total), count: agentRefillFees.count },
-        cashoutServiceFees: { totalHtg: r2(cashoutFees.total), count: cashoutFees.count }
+        cashoutServiceFees: { totalHtg: r2(cashoutFees.total), count: cashoutFees.count },
+        depositServiceFees: { totalHtg: r2(depositFees.total), count: depositFees.count },
+        vipSales: { totalHtg: r2(vipSales.total), count: vipSales.count }
       }
     }
   };

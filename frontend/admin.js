@@ -228,6 +228,7 @@ const state = {
   deposits: [],
   agents: [],
   refills: [],
+  vip: [],
   revenue: null,
   accountLookup: null,
   contactWhatsapp: null, // numéro configuré pour "Nous contacter" (null tant que non défini)
@@ -262,7 +263,7 @@ async function api(path, { method = 'GET', body } = {}) {
 
 function logout() {
   localStorage.removeItem('konkou_admin_token');
-  setState({ token: null, cashouts: [], verifications: [], deposits: [], agents: [], refills: [], revenue: null, accountLookup: null, error: '', success: '' });
+  setState({ token: null, cashouts: [], verifications: [], deposits: [], agents: [], refills: [], vip: [], revenue: null, accountLookup: null, error: '', success: '' });
 }
 
 function render() {
@@ -290,7 +291,7 @@ function renderLogin() {
 }
 
 function renderDashboard() {
-  const sections = [['cashouts', '💸 Retraits'], ['verifications', '💬 Vérifications'], ['deposits', '🎟️ Dépôts'], ['agents', '🧑‍💼 Agents'], ['refills', '💳 Renflouements'], ['revenue', '📊 Revenus'], ['accounts', '🗑️ Comptes'], ['settings', '⚙️ Réglages']];
+  const sections = [['cashouts', '💸 Retraits'], ['verifications', '💬 Vérifications'], ['deposits', '🎟️ Dépôts'], ['vip', '👑 VIP'], ['agents', '🧑‍💼 Agents'], ['refills', '💳 Renflouements'], ['revenue', '📊 Revenus'], ['accounts', '🗑️ Comptes'], ['settings', '⚙️ Réglages']];
   return `
     <div class="topbar">
       <img src="${logoUrl}" alt="Konkou" class="topbar-logo">
@@ -315,6 +316,7 @@ function renderSectionBody() {
   if (state.section === 'cashouts') return renderCashoutsSection();
   if (state.section === 'verifications') return renderVerificationsSection();
   if (state.section === 'deposits') return renderDepositsSection();
+  if (state.section === 'vip') return renderVipSection();
   if (state.section === 'agents') return renderAgentsSection();
   if (state.section === 'refills') return renderRefillsSection();
   if (state.section === 'revenue') return renderRevenueSection();
@@ -404,6 +406,32 @@ function renderDepositsSection() {
   `;
 }
 
+// ---------- Achats VIP ----------
+function renderVipSection() {
+  const tabs = [['pending', 'En attente'], ['confirmed', 'Confirmés'], ['rejected', 'Rejetés']];
+  return `
+    <div class="grid-2" style="grid-template-columns: repeat(3, 1fr); margin-top:14px;">
+      ${tabs.map(([key, label]) => `
+        <button class="tile" data-vip-filter="${key}" style="font-size:13px; ${state.statusFilter === key ? 'outline:2px solid var(--green);' : ''}">${label}</button>
+      `).join('')}
+    </div>
+    ${state.vip.length === 0 ? `<div class="card"><p>Aucun achat VIP "${statusLabel(state.statusFilter)}".</p></div>` : state.vip.map(v => `
+      <div class="card">
+        <h2>${escapeHtml(v.user_name)} — ${escapeHtml(v.user_phone)}</h2>
+        <p><strong>${v.amount_htg} HTG → ${v.duration_days} jours VIP</strong>${v.agent_code ? ` · agent ${escapeHtml(v.agent_code)}` : ''}</p>
+        <p style="font-size:24px; font-weight:800; letter-spacing:3px;">${escapeHtml(v.code)}</p>
+        <p style="font-size:12px;">Demandé le ${escapeHtml(v.requested_at)}${v.processed_at ? ` · Traité le ${escapeHtml(v.processed_at)}` : ''}</p>
+        ${v.status === 'pending' ? `
+          <div class="grid-2" style="margin-top:10px;">
+            <button class="tile" data-vip-confirm="${v.id}" style="background:rgba(34,197,94,0.2);">✅ Confirmer</button>
+            <button class="tile" data-vip-reject="${v.id}" style="background:rgba(210,16,52,0.2);">❌ Rejeter</button>
+          </div>
+        ` : `<p>${statusLabel(v.status)}</p>`}
+      </div>
+    `).join('')}
+  `;
+}
+
 // ---------- Candidatures Agent ----------
 const ID_TYPE_LABELS = { cin: "Carte d'Identification Nationale", passeport: 'Passeport', permis: 'Permis de conduire' };
 
@@ -467,7 +495,9 @@ function renderRevenueSection() {
   const rows = [
     ['Frais de capital agent (inscription)', b.agentCapitalFees],
     ['Frais de renflouement agent', b.agentRefillFees],
-    ['Frais de service sur les retraits', b.cashoutServiceFees]
+    ['Frais de service sur les retraits', b.cashoutServiceFees],
+    ['Frais de service sur les dépôts', b.depositServiceFees],
+    ['Ventes VIP', b.vipSales]
   ];
   const today = new Date().toISOString().slice(0, 10);
   const min = state.revenue.earliestDate || undefined;
@@ -647,6 +677,17 @@ async function loadDeposits() {
   }
 }
 
+async function loadVipPurchases() {
+  setState({ loading: true, error: '' });
+  try {
+    const data = await api(`/admin/vip?status=${state.statusFilter}`);
+    setState({ vip: data.vipPurchases, loading: false });
+  } catch (err) {
+    if (err.status === 401) { logout(); return; }
+    setState({ error: err.message, loading: false });
+  }
+}
+
 async function loadAgents() {
   setState({ loading: true, error: '' });
   try {
@@ -699,6 +740,7 @@ function loadSection() {
   if (state.section === 'cashouts') return loadCashouts();
   if (state.section === 'verifications') return loadVerifications();
   if (state.section === 'deposits') return loadDeposits();
+  if (state.section === 'vip') return loadVipPurchases();
   if (state.section === 'agents') return loadAgents();
   if (state.section === 'refills') return loadRefills();
   if (state.section === 'revenue') return loadRevenue();
@@ -761,6 +803,16 @@ function bind() {
   });
   document.querySelectorAll('[data-deposit-reject]').forEach(btn => {
     btn.addEventListener('click', () => actOnDeposit(btn.dataset.depositReject, 'reject'));
+  });
+
+  document.querySelectorAll('[data-vip-filter]').forEach(btn => {
+    btn.addEventListener('click', () => { state.statusFilter = btn.dataset.vipFilter; loadVipPurchases(); });
+  });
+  document.querySelectorAll('[data-vip-confirm]').forEach(btn => {
+    btn.addEventListener('click', () => actOnVip(btn.dataset.vipConfirm, 'confirm'));
+  });
+  document.querySelectorAll('[data-vip-reject]').forEach(btn => {
+    btn.addEventListener('click', () => actOnVip(btn.dataset.vipReject, 'reject'));
   });
 
   document.querySelectorAll('[data-agent-filter]').forEach(btn => {
@@ -1050,6 +1102,21 @@ async function actOnDeposit(id, action) {
     const data = await api(path, { method: 'POST', body: { id: Number(id) } });
     setState({ success: data.message, error: '' });
     loadDeposits();
+  } catch (err) {
+    setState({ error: err.message });
+  }
+}
+
+async function actOnVip(id, action) {
+  const confirmMsg = action === 'confirm'
+    ? 'Confirmer que ce paiement VIP a bien été reçu en espèces (prolonge le compte joueur) ?'
+    : "Rejeter cette demande VIP (le paiement n'a pas été reçu) ?";
+  if (!confirm(confirmMsg)) return;
+  try {
+    const path = action === 'confirm' ? '/admin/vip/confirm' : '/admin/vip/reject';
+    const data = await api(path, { method: 'POST', body: { id: Number(id) } });
+    setState({ success: data.message, error: '' });
+    loadVipPurchases();
   } catch (err) {
     setState({ error: err.message });
   }

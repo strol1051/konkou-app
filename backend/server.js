@@ -15,6 +15,7 @@ import * as agentsRoutes from './routes/agents.js';
 import * as accountRoutes from './routes/account.js';
 import * as contactRoutes from './routes/contact.js';
 import * as themeRoutes from './routes/theme.js';
+import * as vipRoutes from './routes/vip.js';
 
 loadEnv();
 process.env.JWT_SECRET = process.env.JWT_SECRET || 'konkou_dev_secret_change_in_production';
@@ -223,6 +224,20 @@ const server = http.createServer(async (req, res) => {
       return sendJson(res, status, data);
     }
 
+    if (pathname === '/api/vip/status' && method === 'GET') {
+      const userId = requireAuth(req, res); if (userId == null) return;
+      if (blockIfAgent(req, res, userId)) return;
+      const { status, data } = vipRoutes.getVipStatus(userId);
+      return sendJson(res, status, data);
+    }
+
+    if (pathname === '/api/vip/request' && method === 'POST') {
+      const userId = requireAuth(req, res); if (userId == null) return;
+      if (blockIfAgent(req, res, userId)) return;
+      const { status, data } = vipRoutes.requestVip(userId, body);
+      return sendJson(res, status, data);
+    }
+
     // Inscription agent dédiée, publique (pas de session requise) — voir
     // agentsRoutes.registerAgent : crée le compte ET la candidature en une étape.
     if (pathname === '/api/agents/register' && method === 'POST') {
@@ -288,6 +303,18 @@ const server = http.createServer(async (req, res) => {
     if (pathname === '/api/agents/refill' && method === 'POST') {
       const userId = requireAuth(req, res); if (userId == null) return;
       const { status, data } = agentsRoutes.postAgentRefill(userId, body);
+      return sendJson(res, status, data);
+    }
+
+    if (pathname === '/api/agents/vip/confirm' && method === 'POST') {
+      const userId = requireAuth(req, res); if (userId == null) return;
+      const { status, data } = agentsRoutes.agentConfirmVip(userId, body);
+      return sendJson(res, status, data);
+    }
+
+    if (pathname === '/api/agents/vip/reject' && method === 'POST') {
+      const userId = requireAuth(req, res); if (userId == null) return;
+      const { status, data } = agentsRoutes.agentRejectVip(userId, body);
       return sendJson(res, status, data);
     }
 
@@ -428,6 +455,24 @@ const server = http.createServer(async (req, res) => {
     if (pathname === '/api/admin/agent-refills/reject' && method === 'POST') {
       if (!requireAdmin(req, res)) return;
       const { status, data } = adminRoutes.rejectAgentRefill(body);
+      return sendJson(res, status, data);
+    }
+
+    if (pathname === '/api/admin/vip' && method === 'GET') {
+      if (!requireAdmin(req, res)) return;
+      const { status, data } = adminRoutes.listVipPurchases(url.searchParams.get('status'));
+      return sendJson(res, status, data);
+    }
+
+    if (pathname === '/api/admin/vip/confirm' && method === 'POST') {
+      if (!requireAdmin(req, res)) return;
+      const { status, data } = adminRoutes.confirmVipPurchase(body);
+      return sendJson(res, status, data);
+    }
+
+    if (pathname === '/api/admin/vip/reject' && method === 'POST') {
+      if (!requireAdmin(req, res)) return;
+      const { status, data } = adminRoutes.rejectVipPurchase(body);
       return sendJson(res, status, data);
     }
 

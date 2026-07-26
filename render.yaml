@@ -34,13 +34,13 @@ services:
       - key: CASHOUT_FEE_TIER1_MAX_HTG
         value: "2000"
       - key: CASHOUT_FEE_TIER1_PERCENT
-        value: "5"
+        value: "12"
       - key: CASHOUT_FEE_TIER2_MAX_HTG
         value: "5000"
       - key: CASHOUT_FEE_TIER2_PERCENT
-        value: "6"
+        value: "14"
       - key: CASHOUT_FEE_TIER3_PERCENT
-        value: "8"
+        value: "16"
       - key: MIN_DEPOSIT_HTG
         value: "100"
       - key: MAX_DEPOSIT_HTG
@@ -49,6 +49,14 @@ services:
         value: "50"
       - key: DEPOSIT_LOCATION_INFO
         value: "Présentez ce code et votre paiement à votre agent pour recevoir vos parties bonus."
+      - key: DEPOSIT_FEE_PERCENT
+        value: "5"
+      - key: VIP_PRICE_HTG
+        value: "300"
+      - key: VIP_DURATION_DAYS
+        value: "30"
+      - key: VIP_EXTRA_DAILY_PLAYS
+        value: "10"
       - key: AGENT_CAPITAL_HTG
         value: "7500"
       - key: AGENT_CAPITAL_FEE_PERCENT

@@ -4,6 +4,7 @@ import crypto from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import db from '../db.js';
 import { getActiveThemeKey } from './theme.js';
+import { isVipActive, getVipExtraDailyPlays } from './vip.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const allQuestions = JSON.parse(fs.readFileSync(path.join(__dirname, '../data/questions.json'), 'utf-8'));
@@ -21,27 +22,38 @@ function questionPool() {
 }
 
 const activeSessions = new Map(); // sessionToken -> { userId, gameType, correctAnswers, createdAt }
-const DAILY_LIMIT = 30;
+// Corrigé (juillet 2026, revue de rentabilité) : relevée de 5 à 30 en juillet 2026 pour
+// rendre le jeu plus attractif, puis redescendue à 15 — 30 exposait la plateforme à un
+// passif de paiement trop élevé par joueur très actif (jusqu'à ~2940 points/jour possibles
+// avec un score parfait aux deux jeux, soit ~235 HTG/jour de valeur retirable pour un seul
+// joueur). 15 réduit ce plafond de moitié tout en restant nettement plus généreux que la
+// limite d'origine (5) — voir "Comment Konkou génère du revenu" dans README.md.
+const DAILY_LIMIT = 15;
 const POINTS_PER_CORRECT_TRIVIA = 10;
 const POINTS_PER_CORRECT_PUZZLE = 6;
 const SESSION_TTL_MS = 30 * 60 * 1000; // 30 min: a game started but never submitted is abandoned
 
 // Mise optionnelle : le joueur engage entre STAKE_MIN et STAKE_MAX points (dans la limite
-// de son solde) avant de jouer. Le résultat de la partie fait varier cette mise de ±30%
+// de son solde) avant de jouer. Le résultat de la partie fait varier cette mise de ±15%
 // selon le score, de façon continue (pas de seuil de réussite/échec net) :
-//   ratio = bonnes réponses / total   →   multiplicateur = 0.7 + 0.6 × ratio
-// Un score de 0% renvoie 70% de la mise (perte de 30%), un score de 100% renvoie 130% de
-// la mise (gain de 30%), un score de 50% rend la mise inchangée. Ce mécanisme est distinct
+//   ratio = bonnes réponses / total   →   multiplicateur = 0.85 + 0.3 × ratio
+// Un score de 0% renvoie 85% de la mise (perte de 15%), un score de 100% renvoie 115% de
+// la mise (gain de 15%), un score de 50% rend la mise inchangée. Ce mécanisme est distinct
 // et s'ajoute aux points normaux gagnés par bonne réponse (POINTS_PER_CORRECT_*), qui ne
 // changent pas — voir "Mise sur sa performance" dans README.md pour l'avertissement légal :
 // contrairement au reste de l'app, ceci met réellement des points (donc de la valeur HTG
 // retirable) en jeu selon un résultat, ce qui s'apparente à un pari.
+// Corrigé (juillet 2026, revue de rentabilité) : la fourchette était ±30% (0.7 à 1.3). Si
+// les joueurs répondent correctement plus de la moitié du temps en moyenne (probable, vu
+// que chaque question a 4 choix), la mise crée en moyenne PLUS de points qu'elle n'en
+// détruit à l'échelle de tous les joueurs — un coût net pour la plateforme, pas un gain.
+// Resserrée à ±15% pour réduire cette volatilité de moitié, sans retirer l'aspect ludique.
 const STAKE_MIN = 100;
 const STAKE_MAX = 2500;
 
 function stakeMultiplier(correctCount, total) {
   const ratio = total > 0 ? correctCount / total : 0;
-  return 0.7 + 0.6 * ratio;
+  return 0.85 + 0.3 * ratio;
 }
 
 // Valide une mise optionnelle fournie en query string (chaîne ou undefined/null).
@@ -87,18 +99,21 @@ function todayCount(userId, gameType) {
 }
 
 // Once the free daily limit is reached, a user can still play by spending a bonus play
-// (bought by depositing cash at the agent — see routes/deposits.js).
+// (bought by depositing cash at the agent — see routes/deposits.js). VIP (voir vip.js)
+// relève ce plafond gratuit de VIP_EXTRA_DAILY_PLAYS parties, sans toucher aux parties
+// bonus (les deux avantages se cumulent).
 function playAllowance(userId, gameType) {
   const playedToday = todayCount(userId, gameType);
-  if (playedToday < DAILY_LIMIT) return { allowed: true, usingBonus: false, playedToday };
+  const effectiveLimit = DAILY_LIMIT + (isVipActive(userId) ? getVipExtraDailyPlays() : 0);
+  if (playedToday < effectiveLimit) return { allowed: true, usingBonus: false, playedToday, effectiveLimit };
   const user = db.prepare('SELECT bonus_plays FROM users WHERE id = ?').get(userId);
   if (!user || user.bonus_plays < 1) {
     return {
       allowed: false,
-      error: `Limite quotidienne atteinte (${DAILY_LIMIT} parties/jour). Revenez demain, ou déposez chez l'agent pour des parties bonus.`
+      error: `Limite quotidienne atteinte (${effectiveLimit} parties/jour). Revenez demain, devenez VIP, ou déposez chez l'agent pour des parties bonus.`
     };
   }
-  return { allowed: true, usingBonus: true, playedToday };
+  return { allowed: true, usingBonus: true, playedToday, effectiveLimit };
 }
 
 export function getTrivia(userId, rawStake) {
@@ -119,7 +134,7 @@ export function getTrivia(userId, rawStake) {
     data: {
       sessionToken,
       questions: picked.map(q => ({ id: q.id, question: q.question, choices: q.choices })),
-      remainingPlaysToday: allowance.usingBonus ? DAILY_LIMIT - allowance.playedToday : DAILY_LIMIT - allowance.playedToday - 1,
+      remainingPlaysToday: allowance.usingBonus ? allowance.effectiveLimit - allowance.playedToday : allowance.effectiveLimit - allowance.playedToday - 1,
       usingBonusPlay: allowance.usingBonus,
       stake: stakeCheck.stake
     }
@@ -204,7 +219,7 @@ export function getPuzzle(userId, rawStake) {
     status: 200,
     data: {
       sessionToken, problems,
-      remainingPlaysToday: allowance.usingBonus ? DAILY_LIMIT - allowance.playedToday : DAILY_LIMIT - allowance.playedToday - 1,
+      remainingPlaysToday: allowance.usingBonus ? allowance.effectiveLimit - allowance.playedToday : allowance.effectiveLimit - allowance.playedToday - 1,
       timeLimitSeconds: 45,
       usingBonusPlay: allowance.usingBonus,
       stake: stakeCheck.stake

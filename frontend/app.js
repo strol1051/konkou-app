@@ -700,11 +700,11 @@ function renderHome() {
     </div>
     <div class="card">
       <h2>Comment ça marche</h2>
-      <p>1. Jouez à un jeu d'habileté (30 parties gratuites/jour et par jeu).</p>
+      <p>1. Jouez à un jeu d'habileté (15 parties gratuites/jour et par jeu).</p>
       <p>2. Gagnez des points selon vos bonnes réponses.</p>
       <p>3. Cumulez et demandez un retrait en espèces chez notre agent.</p>
       <p>4. Plus de parties gratuites aujourd'hui ? Déposez chez l'agent pour des parties bonus (onglet Portefeuille) — cet argent achète des parties, il n'est pas retirable.</p>
-      <p>5. Avant chaque partie, vous pouvez miser entre 100 et 2500 de vos points : bon score, la mise augmente jusqu'à 30% ; mauvais score, elle diminue jusqu'à 30%. Optionnel — vous pouvez toujours jouer sans miser.</p>
+      <p>5. Avant chaque partie, vous pouvez miser entre 100 et 2500 de vos points : bon score, la mise augmente jusqu'à 15% ; mauvais score, elle diminue jusqu'à 15%. Optionnel — vous pouvez toujours jouer sans miser.</p>
     </div>
   `;
 }
@@ -732,7 +732,7 @@ function renderStakePrompt() {
     ${state.error ? `<div class="error-banner">${escapeHtml(state.error)}</div>` : ''}
     <div class="card">
       <h2>${pendingGameType === 'trivia' ? '🧠' : '🔢'} ${label}</h2>
-      <p>Vous pouvez miser entre ${STAKE_MIN} et ${STAKE_MAX} points de votre solde (${balance} pts disponibles) avant de jouer. Votre mise varie de ±30% selon votre score : un score parfait la fait gagner 30%, un score nul lui en fait perdre 30%, un score à mi-chemin la laisse inchangée. Les points gagnés normalement par bonne réponse restent les mêmes, avec ou sans mise.</p>
+      <p>Vous pouvez miser entre ${STAKE_MIN} et ${STAKE_MAX} points de votre solde (${balance} pts disponibles) avant de jouer. Votre mise varie de ±15% selon votre score : un score parfait la fait gagner 15%, un score nul lui en fait perdre 15%, un score à mi-chemin la laisse inchangée. Les points gagnés normalement par bonne réponse restent les mêmes, avec ou sans mise.</p>
       ${maxStake < STAKE_MIN ? `
         <p class="error-banner">Solde insuffisant (min. ${STAKE_MIN} pts) pour miser — vous pouvez quand même jouer sans mise.</p>
         <button class="primary" id="play-no-stake">Jouer sans mise</button>
@@ -961,11 +961,11 @@ function bindLeaderboardEvents() {
 // ---------- WALLET ----------
 async function renderWalletAsync() {
   try {
-    const [data, agentsRes] = await Promise.all([api('/wallet'), api('/agents/list')]);
+    const [data, agentsRes, vip] = await Promise.all([api('/wallet'), api('/agents/list'), api('/vip/status')]);
     const content = document.getElementById('view-content');
     if (!content) return;
-    content.innerHTML = walletHtml(data, agentsRes.agents);
-    bindWalletEvents(data);
+    content.innerHTML = walletHtml(data, agentsRes.agents, vip);
+    bindWalletEvents(data, agentsRes.agents, vip);
   } catch (err) {
     setState({ error: err.message });
   }
@@ -1014,7 +1014,38 @@ function bindAgentSelectInfo(selectId) {
   });
 }
 
-function walletHtml(data, agents) {
+function vipCardHtml(vip, agents) {
+  const noAgents = agents.length === 0;
+  if (vip.active) {
+    const until = new Date(vip.vipUntil);
+    return `
+      <div class="card" style="border:2px solid var(--gold, #d4a017);">
+        <h2>👑 Vous êtes VIP</h2>
+        <p>Actif jusqu'au ${until.toLocaleDateString('fr-FR')} — +${vip.extraDailyPlays} parties gratuites/jour.</p>
+        ${vip.pending ? `<p style="font-size:12px;">Un renouvellement de ${vip.pending.amount_htg} HTG est en attente de confirmation (code ${escapeHtml(vip.pending.code)}).</p>` : `
+        <form id="vip-form">
+          ${agentSelectHtml(agents, 'vip-agent-select')}
+          <button class="primary" type="submit" ${noAgents ? 'disabled' : ''}>Prolonger de ${vip.durationDays} jours (${vip.priceHtg} HTG)</button>
+        </form>
+        `}
+      </div>
+    `;
+  }
+  return `
+    <div class="card">
+      <h2>👑 Devenir VIP</h2>
+      <p style="font-size:13px;">${vip.priceHtg} HTG chez un agent pour +${vip.extraDailyPlays} parties gratuites/jour pendant ${vip.durationDays} jours.</p>
+      ${vip.pending ? `<p style="font-size:12px;">Demande en attente de confirmation (code ${escapeHtml(vip.pending.code)}).</p>` : `
+      <form id="vip-form">
+        ${agentSelectHtml(agents, 'vip-agent-select')}
+        <button class="primary" type="submit" ${noAgents ? 'disabled' : ''}>Devenir VIP (${vip.priceHtg} HTG)</button>
+      </form>
+      `}
+    </div>
+  `;
+}
+
+function walletHtml(data, agents, vip) {
   const minCashoutPoints = Math.ceil(data.minCashoutHtg / data.rate);
   const noAgents = agents.length === 0;
   return `
@@ -1038,8 +1069,26 @@ function walletHtml(data, agents) {
         <h2>✅ Dépôt demandé</h2>
         <p>Votre code de dépôt (à présenter avec le paiement) :</p>
         <p style="font-size:32px; font-weight:800; letter-spacing:4px; text-align:center; color:var(--text);">${escapeHtml(state.lastDepositCode)}</p>
+        ${state.lastDepositDetails ? `
+          <div class="stat-row"><span>Montant versé</span><span>${state.lastDepositDetails.htgAmount} HTG</span></div>
+          <div class="stat-row"><span>Frais de service (${state.lastDepositDetails.feePercent}%)</span><span>-${state.lastDepositDetails.platformFeeHtg} HTG</span></div>
+          <div class="stat-row"><span><strong>Parties bonus accordées</strong></span><span><strong>${state.lastDepositDetails.playsGranted}</strong></span></div>
+        ` : ''}
         <p>${escapeHtml(data.depositInfo)}</p>
         <button class="secondary" id="dismiss-deposit-code">J'ai noté le code</button>
+      </div>
+    ` : ''}
+    ${state.lastVipCode ? `
+      <div class="card" style="border:2px solid var(--gold, #d4a017);">
+        <h2>👑 Abonnement VIP demandé</h2>
+        <p>Votre code (à présenter avec le paiement) :</p>
+        <p style="font-size:32px; font-weight:800; letter-spacing:4px; text-align:center; color:var(--text);">${escapeHtml(state.lastVipCode)}</p>
+        ${state.lastVipDetails ? `
+          <div class="stat-row"><span>Montant</span><span>${state.lastVipDetails.amountHtg} HTG</span></div>
+          <div class="stat-row"><span>Durée</span><span>${state.lastVipDetails.durationDays} jours</span></div>
+        ` : ''}
+        <p>${escapeHtml(data.depositInfo)}</p>
+        <button class="secondary" id="dismiss-vip-code">J'ai noté le code</button>
       </div>
     ` : ''}
     <div class="card">
@@ -1064,7 +1113,7 @@ function walletHtml(data, agents) {
     </div>
     <div class="card">
       <h2>🎟️ Déposer chez un agent pour des parties bonus</h2>
-      <p style="font-size:13px;">Achetez des parties bonus (au-delà de vos 30 parties gratuites/jour) — cet argent n'est pas retirable, il sert uniquement à jouer. ${data.htgPerBonusPlay} HTG = 1 partie bonus.</p>
+      <p style="font-size:13px;">Achetez des parties bonus (au-delà de vos 15 parties gratuites/jour) — cet argent n'est pas retirable, il sert uniquement à jouer. ${data.htgPerBonusPlay} HTG = 1 partie bonus.</p>
       <p style="font-size:13px;">${escapeHtml(data.depositInfo)}</p>
       <form id="deposit-form">
         <input name="htgAmount" type="number" placeholder="Montant en HTG (${data.minDepositHtg}–${data.maxDepositHtg})" min="${data.minDepositHtg}" max="${data.maxDepositHtg}" required />
@@ -1072,6 +1121,7 @@ function walletHtml(data, agents) {
         <button class="primary" type="submit" ${noAgents ? 'disabled' : ''}>Générer mon code de dépôt</button>
       </form>
     </div>
+    ${vipCardHtml(vip, agents)}
     <div class="card">
       <h2>Historique des retraits</h2>
       ${data.cashouts.length === 0 ? '<p>Aucune demande.</p>' : data.cashouts.map(c => `
@@ -1090,6 +1140,17 @@ function walletHtml(data, agents) {
         </div>
       `).join('')}
     </div>
+    ${vip.history.length > 0 ? `
+    <div class="card">
+      <h2>Historique VIP</h2>
+      ${vip.history.map(v => `
+        <div class="tx-row">
+          <span>${v.amount_htg} HTG → ${v.duration_days} jours (code ${escapeHtml(v.code)})</span>
+          <span>${depositStatusLabel(v.status)}</span>
+        </div>
+      `).join('')}
+    </div>
+    ` : ''}
     <div class="card">
       <h2>Transactions récentes</h2>
       ${data.transactions.map(t => `
@@ -1115,13 +1176,18 @@ function depositStatusLabel(status) {
 function bindWalletEvents() {
   bindAgentSelectInfo('cashout-agent-select');
   bindAgentSelectInfo('deposit-agent-select');
+  bindAgentSelectInfo('vip-agent-select');
   const dismissBtn = document.getElementById('dismiss-code');
   if (dismissBtn) {
     dismissBtn.addEventListener('click', () => setState({ lastCashoutCode: null, lastCashoutDetails: null }));
   }
   const dismissDepositBtn = document.getElementById('dismiss-deposit-code');
   if (dismissDepositBtn) {
-    dismissDepositBtn.addEventListener('click', () => setState({ lastDepositCode: null }));
+    dismissDepositBtn.addEventListener('click', () => setState({ lastDepositCode: null, lastDepositDetails: null }));
+  }
+  const dismissVipBtn = document.getElementById('dismiss-vip-code');
+  if (dismissVipBtn) {
+    dismissVipBtn.addEventListener('click', () => setState({ lastVipCode: null, lastVipDetails: null }));
   }
   const form = document.getElementById('cashout-form');
   if (form) {
@@ -1153,9 +1219,35 @@ function bindWalletEvents() {
       const fd = Object.fromEntries(new FormData(e.target).entries());
       try {
         const res = await api('/deposits', { method: 'POST', body: fd });
-        setState({ lastDepositCode: res.code, error: '' });
+        setState({
+          lastDepositCode: res.code,
+          lastDepositDetails: {
+            htgAmount: res.htgAmount,
+            feePercent: res.feePercent,
+            platformFeeHtg: res.platformFeeHtg,
+            playsGranted: res.playsGranted
+          },
+          error: ''
+        });
       } catch (err) {
-        setState({ error: err.message, lastDepositCode: null });
+        setState({ error: err.message, lastDepositCode: null, lastDepositDetails: null });
+      }
+    });
+  }
+  const vipForm = document.getElementById('vip-form');
+  if (vipForm) {
+    vipForm.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const fd = Object.fromEntries(new FormData(e.target).entries());
+      try {
+        const res = await api('/vip/request', { method: 'POST', body: fd });
+        setState({
+          lastVipCode: res.code,
+          lastVipDetails: { amountHtg: res.amountHtg, durationDays: res.durationDays },
+          error: ''
+        });
+      } catch (err) {
+        setState({ error: err.message, lastVipCode: null, lastVipDetails: null });
       }
     });
   }
@@ -1453,6 +1545,19 @@ function agentDashboardHtml(dash, commission) {
       `).join('')}
     </div>
     <div class="card">
+      <h2>👑 Achats VIP à confirmer</h2>
+      ${(dash.pendingVip || []).length === 0 ? '<p>Aucun achat VIP en attente.</p>' : dash.pendingVip.map(v => `
+        <div class="tx-row" style="flex-direction:column; align-items:stretch; gap:6px; padding:12px 0;">
+          <span>${escapeHtml(v.user_name)} (${escapeHtml(v.user_phone)}) — ${v.amount_htg} HTG → ${v.duration_days} jours VIP</span>
+          <span style="font-weight:800; letter-spacing:2px;">${escapeHtml(v.code)}</span>
+          <div class="grid-2">
+            <button class="tile" data-agent-vip-confirm="${v.id}" style="background:rgba(34,197,94,0.2); font-size:13px;">✅ Confirmer</button>
+            <button class="tile" data-agent-vip-reject="${v.id}" style="background:rgba(210,16,52,0.2); font-size:13px;">❌ Rejeter</button>
+          </div>
+        </div>
+      `).join('')}
+    </div>
+    <div class="card">
       <h2>💳 Renflouement de capital</h2>
       <p style="font-size:13px;">Augmentez votre crédit à revendre : chaque renflouement peut aller jusqu'au plafond indiqué ci-dessous, avec ${dash.refillFeePercent}% de frais prélevés par Konkou sur le montant déposé.</p>
       <p>Dernier dépôt : <strong>${dash.lastCapitalDepositHtg} HTG</strong> · Plafond du prochain renflouement : <strong>${dash.nextRefillCeilingHtg} HTG</strong></p>
@@ -1518,6 +1623,12 @@ function bindAgentEvents() {
   });
   document.querySelectorAll('[data-agent-cashout-reject]').forEach(btn => {
     btn.addEventListener('click', () => agentAction('/agents/cashouts/reject', btn.dataset.agentCashoutReject));
+  });
+  document.querySelectorAll('[data-agent-vip-confirm]').forEach(btn => {
+    btn.addEventListener('click', () => agentAction('/agents/vip/confirm', btn.dataset.agentVipConfirm));
+  });
+  document.querySelectorAll('[data-agent-vip-reject]').forEach(btn => {
+    btn.addEventListener('click', () => agentAction('/agents/vip/reject', btn.dataset.agentVipReject));
   });
 
   const refillForm = document.getElementById('agent-refill-form');
