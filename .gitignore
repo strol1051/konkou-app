@@ -1,0 +1,13 @@
+# Base de données locale (générée automatiquement au premier démarrage)
+backend/konkou.db
+backend/konkou.db-journal
+backend/konkou.db-wal
+backend/konkou.db-shm
+
+# Ne jamais committer de vrais secrets — backend/.env ci-joint ne contient que des
+# valeurs de démo. En production, configurez les variables d'environnement directement
+# dans le tableau de bord Render (voir DEPLOY.md).
+backend/.env.local
+
+node_modules/
+.DS_Store

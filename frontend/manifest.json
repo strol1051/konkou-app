@@ -1,0 +1,16 @@
+{
+  "name": "Konkou - Jeux d'habileté avec récompenses",
+  "short_name": "Konkou",
+  "description": "Jouez à des jeux d'habileté (quiz, calcul mental), gagnez des points, encaissez via NatCash.",
+  "start_url": ".",
+  "scope": ".",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#0b1220",
+  "theme_color": "#00209F",
+  "lang": "fr",
+  "icons": [
+    { "src": "icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" },
+    { "src": "icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "maskable" }
+  ]
+}

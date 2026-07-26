@@ -1,0 +1,68 @@
+# Render Blueprint — voir DEPLOY.md pour la marche à suivre complète.
+# Cette configuration décrit le service pour que Render puisse tout créer en un clic
+# via "New +" → "Blueprint". Un disque persistant est attaché pour que la base SQLite
+# (comptes, points, retraits) survive aux redéploiements et redémarrages.
+
+services:
+  - type: web
+    name: konkou
+    runtime: node
+    plan: starter
+    rootDir: backend
+    buildCommand: npm install
+    startCommand: npm start
+    healthCheckPath: /api/health
+    disk:
+      name: konkou-data
+      mountPath: /var/data
+      sizeGB: 1
+    envVars:
+      - key: DB_PATH
+        value: /var/data/konkou.db
+      - key: JWT_SECRET
+        generateValue: true
+      - key: ADMIN_PASSWORD
+        generateValue: true
+      - key: POINTS_TO_HTG_RATE
+        value: "0.08"
+      - key: MIN_CASHOUT_HTG
+        value: "500"
+      - key: MAX_DAILY_CASHOUT_HTG
+        value: "10000"
+      - key: PICKUP_LOCATION_INFO
+        value: "Présentez ce code à votre agent pour recevoir votre argent en espèces."
+      - key: CASHOUT_FEE_TIER1_MAX_HTG
+        value: "2000"
+      - key: CASHOUT_FEE_TIER1_PERCENT
+        value: "5"
+      - key: CASHOUT_FEE_TIER2_MAX_HTG
+        value: "5000"
+      - key: CASHOUT_FEE_TIER2_PERCENT
+        value: "6"
+      - key: CASHOUT_FEE_TIER3_PERCENT
+        value: "8"
+      - key: MIN_DEPOSIT_HTG
+        value: "100"
+      - key: MAX_DEPOSIT_HTG
+        value: "2500"
+      - key: HTG_PER_BONUS_PLAY
+        value: "50"
+      - key: DEPOSIT_LOCATION_INFO
+        value: "Présentez ce code et votre paiement à votre agent pour recevoir vos parties bonus."
+      - key: AGENT_CAPITAL_HTG
+        value: "7500"
+      - key: AGENT_CAPITAL_FEE_PERCENT
+        value: "10"
+      - key: AGENT_CASHOUT_COMMISSION_PERCENT
+        value: "10"
+      - key: AGENT_REFILL_GROWTH_PERCENT
+        value: "25"
+      - key: AGENT_REFILL_FEE_PERCENT
+        value: "7"
+      - key: AGENT_REFILL_MIN_HTG
+        value: "100"
+      # OBLIGATOIRE : à définir manuellement dans l'onglet "Environment" de Render après
+      # le déploiement (numéro E.164 sans le "+"), sinon personne ne peut confirmer une
+      # inscription ou une réinitialisation de mot de passe. Voir DEPLOY.md.
+      - key: OPERATOR_WHATSAPP_NUMBER
+        value: "REMPLACER_PAR_VOTRE_NUMERO"
