@@ -997,23 +997,23 @@ function bind() {
     });
   }
   // Zone de danger — double confirmation volontairement redondante avec le backend
-  // (voir adminRoutes.resetTestData) : un confirm() de résumé, puis un prompt() qui
-  // exige de retaper "SUPPRIMER" au clavier. Deux clics accidentels ne suffisent pas à
-  // déclencher une suppression irréversible.
+  // (voir adminRoutes.resetTestData) : un confirm() de résumé, puis le mot de passe
+  // ADMIN_PASSWORD lui-même (pas juste une phrase à recopier) avant d'appeler la route —
+  // même principe que deleteMyAccount côté joueur, qui redemande le mot de passe.
   const resetTestDataBtn = document.getElementById('reset-test-data-btn');
   if (resetTestDataBtn) {
     resetTestDataBtn.addEventListener('click', async () => {
       const summary = 'Ceci supprime DÉFINITIVEMENT tous les comptes joueur/agent, transactions, dépôts, retraits, VIP et renflouements (les réglages sont conservés). Irréversible. Continuer ?';
       if (!confirm(summary)) return;
-      const typed = prompt('Pour confirmer, tapez exactement : SUPPRIMER');
-      if (typed === null) return; // annulé
-      if (typed !== 'SUPPRIMER') {
-        setState({ error: 'Confirmation incorrecte — action annulée, rien n\'a été supprimé.' });
+      const password = prompt('Pour confirmer, entrez le mot de passe admin :');
+      if (password === null) return; // annulé
+      if (!password) {
+        setState({ error: 'Mot de passe requis — action annulée, rien n\'a été supprimé.' });
         return;
       }
       setState({ loading: true, error: '' });
       try {
-        const data = await api('/admin/reset-test-data', { method: 'POST', body: { confirm: typed } });
+        const data = await api('/admin/reset-test-data', { method: 'POST', body: { password } });
         setState({ success: data.message, error: '', loading: false });
       } catch (err) {
         setState({ error: err.message, loading: false });

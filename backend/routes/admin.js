@@ -433,19 +433,19 @@ export function getRevenueSummary(dateFilter) {
 // agent, transactions, dépôts, retraits, VIP, renflouements, sessions de jeu, codes de
 // vérification en attente. Ne touche jamais à "settings" (thème, logo, numéro WhatsApp
 // de contact) — ces réglages ne sont pas des "données de test", l'admin les a choisis
-// pour de vrai et n'a aucune raison de les reperdre. Action irréversible, protégée par
-// une phrase de confirmation en plus de l'authentification admin déjà requise par
-// requireAdmin() côté server.js — le panneau /admin.html demande en plus une double
-// confirmation côté navigateur avant d'appeler cette route.
-const RESET_CONFIRM_PHRASE = 'SUPPRIMER';
-
+// pour de vrai et n'a aucune raison de les reperdre. Action irréversible : en plus
+// d'appeler cette route derrière un token admin déjà valide (requireAdmin, côté
+// server.js), on exige de retaper le mot de passe ADMIN_PASSWORD lui-même (comme
+// deleteMyAccount exige le mot de passe du joueur) — un token qui traînerait dans un
+// onglet resté ouvert ne suffit plus, il faut savoir le mot de passe au moment présent.
 export function resetTestData(body) {
-  const { confirm } = body || {};
-  if (confirm !== RESET_CONFIRM_PHRASE) {
-    return {
-      status: 400,
-      data: { error: `Confirmation manquante ou incorrecte — envoyez exactement "${RESET_CONFIRM_PHRASE}" pour valider cette action irréversible.` }
-    };
+  const { password } = body || {};
+  const expected = process.env.ADMIN_PASSWORD;
+  if (!expected) {
+    return { status: 500, data: { error: "ADMIN_PASSWORD n'est pas configuré côté serveur (voir backend/.env)" } };
+  }
+  if (!password || !timingSafeStringEqual(password, expected)) {
+    return { status: 401, data: { error: 'Mot de passe incorrect' } };
   }
 
   const counts = {
