@@ -15,10 +15,19 @@ function publicUser(user) {
   };
 }
 
+// Format attendu pour tout NOUVEAU numéro : "509" (indicatif Haïti, fixe — voir
+// phoneField() dans frontend/app.js) suivi d'exactement 8 chiffres locaux, qui servent
+// de numéro d'identifiant. N'est appliqué qu'à l'inscription (register/registerAgent) —
+// pas à login, pour ne jamais bloquer un compte déjà créé avant ce format.
+const PHONE_RE = /^509\d{8}$/;
+
 export async function register(body) {
   const { phone, name, password, referralCode } = body || {};
   if (!phone || !name || !password) {
     return { status: 400, data: { error: 'Téléphone, nom et mot de passe requis' } };
+  }
+  if (!PHONE_RE.test(phone)) {
+    return { status: 400, data: { error: 'Numéro de téléphone invalide (8 chiffres attendus après le +509)' } };
   }
   if (password.length < 6) {
     return { status: 400, data: { error: 'Le mot de passe doit contenir au moins 6 caractères' } };
@@ -35,7 +44,13 @@ export async function register(body) {
   }
 
   const hash = hashPassword(password);
-  const signupBonus = 100;
+  // Le bonus de bienvenue ne s'applique qu'à un numéro qui n'a JAMAIS eu de compte
+  // auparavant — voir deleted_phones dans db.js et performDelete dans routes/account.js,
+  // qui y consigne chaque numéro au moment où son compte est supprimé. Sans ce contrôle,
+  // le cycle "s'inscrire → toucher 100 pts → supprimer le compte → réinscrire le même
+  // numéro" fabriquerait des points à l'infini sur un seul numéro de téléphone.
+  const alreadyUsedPhone = !!db.prepare('SELECT 1 FROM deleted_phones WHERE phone = ? LIMIT 1').get(phone);
+  const signupBonus = alreadyUsedPhone ? 0 : 100;
   let userId;
 
   if (existing) {
@@ -61,8 +76,10 @@ export async function register(body) {
       return { status: 409, data: { error: 'Ce numéro est déjà enregistré' } };
     }
     userId = info.lastInsertRowid;
-    db.prepare('INSERT INTO transactions (user_id, type, amount, note) VALUES (?, ?, ?, ?)')
-      .run(userId, 'bonus_signup', signupBonus, 'Bonus de bienvenue');
+    if (signupBonus > 0) {
+      db.prepare('INSERT INTO transactions (user_id, type, amount, note) VALUES (?, ?, ?, ?)')
+        .run(userId, 'bonus_signup', signupBonus, 'Bonus de bienvenue');
+    }
 
     if (referredBy) {
       const referrer = db.prepare('SELECT id FROM users WHERE referral_code = ?').get(referredBy);

@@ -12,6 +12,9 @@ export function getRefillGrowthPercent() { return parseFloat(process.env.AGENT_R
 
 const ID_TYPES = ['cin', 'passeport', 'permis'];
 
+// Même format que routes/auth.js register() — voir le commentaire là-bas.
+const PHONE_RE = /^509\d{8}$/;
+
 function stripAccents(s) { return String(s || '').normalize('NFD').replace(/[̀-ͯ]/g, ''); }
 function onlyLetters(s) { return stripAccents(s).replace(/[^a-zA-Z]/g, '').toUpperCase(); }
 
@@ -165,6 +168,9 @@ export async function registerAgent(body) {
   const { phone, password, lastName, firstName, birthDate, idType, idNumber, city, address } = body || {};
   if (!phone || !password) {
     return { status: 400, data: { error: 'Téléphone et mot de passe requis' } };
+  }
+  if (!PHONE_RE.test(phone)) {
+    return { status: 400, data: { error: 'Numéro de téléphone invalide (8 chiffres attendus après le +509)' } };
   }
   if (String(password).length < 6) {
     return { status: 400, data: { error: 'Le mot de passe doit contenir au moins 6 caractères' } };

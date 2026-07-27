@@ -206,6 +206,32 @@ textarea {
   justify-content: center;
 }
 
+/* Champ téléphone avec préfixe "+509" fixe (voir phoneField() dans app.js) — le joueur
+   ne tape que les 8 chiffres locaux, le "+509" n'est jamais éditable. */
+.phone-wrap {
+  position: relative;
+  margin-bottom: 12px;
+}
+
+.phone-wrap input {
+  padding-left: 58px;
+  margin-bottom: 0;
+}
+
+.phone-prefix {
+  position: absolute;
+  top: 0;
+  left: 0;
+  height: 100%;
+  width: 52px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 700;
+  color: var(--muted);
+  pointer-events: none;
+}
+
 .error-banner {
   background: rgba(210,16,52,0.15);
   border: 1px solid var(--red);

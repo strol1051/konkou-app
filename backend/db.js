@@ -179,6 +179,18 @@ CREATE TABLE IF NOT EXISTS settings (
   value TEXT NOT NULL,
   updated_at TEXT DEFAULT (datetime('now'))
 );
+
+-- Garde une trace des numéros dont le compte a été supprimé (joueur ou agent), même
+-- après que la ligne "users" correspondante a disparu — sert uniquement à empêcher le
+-- cycle "s'inscrire → toucher les 100 pts de bienvenue → supprimer le compte →
+-- réinscrire le même numéro" de fabriquer des points à l'infini (voir routes/auth.js,
+-- register, et routes/account.js, performDelete, qui alimente cette table). Le numéro
+-- reste réutilisable pour un nouveau compte — seul le bonus de bienvenue est concerné.
+CREATE TABLE IF NOT EXISTS deleted_phones (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  phone TEXT NOT NULL,
+  deleted_at TEXT DEFAULT (datetime('now'))
+);
 `);
 
 // Lightweight migrations for databases created before these columns existed.

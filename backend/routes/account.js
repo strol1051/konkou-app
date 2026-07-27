@@ -59,10 +59,16 @@ function agentForfeitureNote(userId) {
 // informational, reconciled with the agent outside the app). Points are not explicitly
 // zeroed first either: deleting the users row eliminates them along with everything else
 // on the account. The phone number itself is freed immediately (UNIQUE constraint on
-// users.phone) and can register a brand new account right away, starting from zero.
-function performDelete(userId) {
-  db.prepare('DELETE FROM agents WHERE user_id = ?').run(userId);
-  db.prepare('DELETE FROM users WHERE id = ?').run(userId);
+// users.phone) and can register a brand new account right away — but see
+// deleted_phones below: a fresh registration on this number won't get the 100pt welcome
+// bonus a second time.
+function performDelete(user) {
+  // Enregistré AVANT la suppression (la ligne users va disparaître) — c'est ce que
+  // routes/auth.js (register) consulte pour ne pas re-accorder le bonus de bienvenue à
+  // un numéro qui l'a déjà touché une fois, même après suppression du compte.
+  db.prepare('INSERT INTO deleted_phones (phone) VALUES (?)').run(user.phone);
+  db.prepare('DELETE FROM agents WHERE user_id = ?').run(user.id);
+  db.prepare('DELETE FROM users WHERE id = ?').run(user.id);
 }
 
 // Self-service deletion — requires re-entering the password as a confirmation step for
@@ -84,7 +90,7 @@ export function deleteMyAccount(userId, body) {
 
   const pointsLost = user.points;
   const agentNote = agentForfeitureNote(user.id);
-  performDelete(user.id);
+  performDelete(user);
   return {
     status: 200,
     data: {
@@ -127,7 +133,7 @@ export function adminDeleteAccount(body) {
 
   const pointsLost = user.points;
   const agentNote = agentForfeitureNote(user.id);
-  performDelete(user.id);
+  performDelete(user);
   return {
     status: 200,
     data: {
