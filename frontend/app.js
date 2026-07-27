@@ -1251,12 +1251,16 @@ function bindAgentSelectInfo(selectId) {
 function vipCardHtml(vip, agents) {
   const noAgents = agents.length === 0;
   if (vip.active) {
-    const until = new Date(vip.vipUntil);
+    // "Depuis le" reste affiché même en attente de renouvellement (l'abonnement en
+    // cours, lui, ne change pas tant que ce renouvellement n'est pas confirmé — voir
+    // agentConfirmVip/confirmVipPurchase, qui ne posent vip_activated_at qu'au moment où
+    // une période VIP EXPIRÉE redémarre, jamais lors d'une prolongation avant échéance).
+    const activatedNote = vip.activatedAt ? `Actif depuis le ${formatDate(vip.activatedAt)} — ` : '';
     return `
       <div class="card" style="border:2px solid var(--gold, #d4a017);">
         <h2>👑 Vous êtes VIP</h2>
-        <p>Actif jusqu'au ${until.toLocaleDateString('fr-FR')} — +${vip.extraDailyPlays} parties gratuites/jour.</p>
-        ${vip.pending ? `<p style="font-size:12px;">Un renouvellement de ${vip.pending.amount_htg} HTG est en attente de confirmation (code ${escapeHtml(vip.pending.code)}).</p>` : `
+        <p>${activatedNote}jusqu'au ${formatDate(vip.vipUntil)} — +${vip.extraDailyPlays} parties gratuites/jour.</p>
+        ${vip.pending ? `<p style="font-size:12px;">Un renouvellement de ${vip.pending.amount_htg} HTG est en attente de confirmation (code ${escapeHtml(vip.pending.code)}) — sera ajouté à la date de fin actuelle une fois confirmé, vous pouvez continuer à jouer normalement en attendant.</p>` : `
         <form id="vip-form">
           ${agentSelectHtml(agents, 'vip-agent-select')}
           <button class="primary" type="submit" ${noAgents ? 'disabled' : ''}>Prolonger de ${vip.durationDays} jours (${vip.priceHtg} HTG)</button>
@@ -1378,8 +1382,10 @@ function walletHtml(data, agents, vip) {
     <div class="card">
       <h2>Historique VIP</h2>
       ${vip.history.map(v => `
-        <div class="tx-row">
-          <span>${v.amount_htg} HTG → ${v.duration_days} jours (code ${escapeHtml(v.code)})</span>
+        <div class="tx-row" style="align-items:flex-start;">
+          <span>${v.amount_htg} HTG → ${v.duration_days} jours (code ${escapeHtml(v.code)})<br>
+            <span style="font-size:11px; color:var(--muted);">Demandé le ${formatDate(v.requested_at)}${v.processed_at ? ` · Traité le ${formatDate(v.processed_at)}` : ''}</span>
+          </span>
           <span>${depositStatusLabel(v.status)}</span>
         </div>
       `).join('')}

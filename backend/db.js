@@ -212,7 +212,16 @@ for (const stmt of [
   "ALTER TABLE deposits ADD COLUMN platform_fee_htg REAL NOT NULL DEFAULT 0",
   // Date jusqu'à laquelle un compte joueur est VIP (NULL = jamais été VIP, ou expiré et
   // pas encore renouvelé) — voir vip_purchases ci-dessus et routes/vip.js.
-  "ALTER TABLE users ADD COLUMN vip_until TEXT"
+  "ALTER TABLE users ADD COLUMN vip_until TEXT",
+  // Début de la période VIP EN COURS (juillet 2026) — distinct de vip_until : posée une
+  // seule fois quand le VIP passe d'inactif/expiré à actif, puis jamais retouchée tant
+  // que les renouvellements suivants arrivent avant l'expiration (ils prolongent
+  // vip_until sans redémarrer la période). Repasse à une nouvelle valeur seulement si le
+  // VIP a expiré puis est réactivé plus tard. Voir routes/agents.js (agentConfirmVip) et
+  // routes/admin.js (confirmVipPurchase), qui la posent toutes les deux (deux chemins de
+  // confirmation possibles pour un même achat VIP), et routes/vip.js (getVipStatus) qui
+  // l'expose au joueur.
+  "ALTER TABLE users ADD COLUMN vip_activated_at TEXT"
 ]) {
   try { db.exec(stmt); } catch { /* column already exists */ }
 }

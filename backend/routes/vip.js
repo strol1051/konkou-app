@@ -25,7 +25,7 @@ export function isVipActive(userId) {
 }
 
 export function getVipStatus(userId) {
-  const u = db.prepare('SELECT vip_until FROM users WHERE id = ?').get(userId);
+  const u = db.prepare('SELECT vip_until, vip_activated_at FROM users WHERE id = ?').get(userId);
   const active = isVipActive(userId);
   const pending = db.prepare(
     `SELECT id, amount_htg, duration_days, code, requested_at FROM vip_purchases WHERE user_id = ? AND status = 'pending' ORDER BY id DESC LIMIT 1`
@@ -38,6 +38,10 @@ export function getVipStatus(userId) {
     status: 200,
     data: {
       active,
+      // Début de la période VIP en cours — voir la colonne vip_activated_at dans db.js.
+      // Uniquement pertinent quand active=true (une période expirée n'a plus de "début
+      // courant" à afficher).
+      activatedAt: active ? (u?.vip_activated_at || null) : null,
       vipUntil: u?.vip_until || null,
       priceHtg: getVipPriceHtg(),
       durationDays: getVipDurationDays(),

@@ -468,14 +468,21 @@ export function agentConfirmVip(userId, body) {
   if (purchase.status !== 'pending') return { status: 409, data: { error: `Cet achat VIP est déjà "${purchase.status}"` } };
 
   const user = db.prepare('SELECT vip_until FROM users WHERE id = ?').get(purchase.user_id);
-  const base = user?.vip_until && new Date(user.vip_until).getTime() > Date.now()
-    ? new Date(user.vip_until)
-    : new Date();
+  const now = new Date();
+  const wasActive = !!(user?.vip_until && new Date(user.vip_until).getTime() > now.getTime());
+  const base = wasActive ? new Date(user.vip_until) : now;
   const newUntil = new Date(base.getTime() + purchase.duration_days * 24 * 60 * 60 * 1000);
   const newUntilIso = newUntil.toISOString();
 
   db.prepare("UPDATE vip_purchases SET status = 'confirmed', processed_at = datetime('now') WHERE id = ?").run(id);
-  db.prepare('UPDATE users SET vip_until = ? WHERE id = ?').run(newUntilIso, purchase.user_id);
+  // vip_activated_at ne bouge que si cette confirmation démarre une NOUVELLE période
+  // (VIP expiré ou jamais activé) — un renouvellement avant échéance (wasActive) ne la
+  // retouche pas, voir la note sur cette colonne dans db.js.
+  if (wasActive) {
+    db.prepare('UPDATE users SET vip_until = ? WHERE id = ?').run(newUntilIso, purchase.user_id);
+  } else {
+    db.prepare('UPDATE users SET vip_until = ?, vip_activated_at = ? WHERE id = ?').run(newUntilIso, now.toISOString(), purchase.user_id);
+  }
   db.prepare('INSERT INTO transactions (user_id, type, amount, note) VALUES (?, ?, ?, ?)')
     .run(purchase.user_id, 'vip_confirmed', 0, `Abonnement VIP confirmé par l'agent ${agent.agent_code} — valide jusqu'au ${newUntilIso.slice(0, 10)} (code ${purchase.code})`);
 
