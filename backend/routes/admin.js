@@ -427,3 +427,55 @@ export function getRevenueSummary(dateFilter) {
     }
   };
 }
+
+// ---------- Réinitialisation des données de test (avant lancement réel) ----------
+// Supprime TOUT ce qui vient des essais faits avant le vrai lancement : comptes joueur/
+// agent, transactions, dépôts, retraits, VIP, renflouements, sessions de jeu, codes de
+// vérification en attente. Ne touche jamais à "settings" (thème, logo, numéro WhatsApp
+// de contact) — ces réglages ne sont pas des "données de test", l'admin les a choisis
+// pour de vrai et n'a aucune raison de les reperdre. Action irréversible, protégée par
+// une phrase de confirmation en plus de l'authentification admin déjà requise par
+// requireAdmin() côté server.js — le panneau /admin.html demande en plus une double
+// confirmation côté navigateur avant d'appeler cette route.
+const RESET_CONFIRM_PHRASE = 'SUPPRIMER';
+
+export function resetTestData(body) {
+  const { confirm } = body || {};
+  if (confirm !== RESET_CONFIRM_PHRASE) {
+    return {
+      status: 400,
+      data: { error: `Confirmation manquante ou incorrecte — envoyez exactement "${RESET_CONFIRM_PHRASE}" pour valider cette action irréversible.` }
+    };
+  }
+
+  const counts = {
+    users: db.prepare('SELECT COUNT(*) as c FROM users').get().c,
+    agents: db.prepare('SELECT COUNT(*) as c FROM agents').get().c,
+    deposits: db.prepare('SELECT COUNT(*) as c FROM deposits').get().c,
+    cashouts: db.prepare('SELECT COUNT(*) as c FROM cashouts').get().c,
+    vipPurchases: db.prepare('SELECT COUNT(*) as c FROM vip_purchases').get().c,
+    agentRefills: db.prepare('SELECT COUNT(*) as c FROM agent_refills').get().c
+  };
+
+  // "Enfants" avant "parents" — le schéma (voir db.js) ne déclare pas de contraintes FK
+  // explicites, donc l'ordre ne casse rien techniquement, mais reste plus propre à lire.
+  // "settings" est délibérément absente de cette liste.
+  const tables = ['transactions', 'game_sessions', 'otp_codes', 'cashouts', 'deposits', 'agent_refills', 'vip_purchases', 'agents', 'users'];
+  for (const table of tables) {
+    db.prepare(`DELETE FROM ${table}`).run();
+  }
+  // Remet les compteurs AUTOINCREMENT à zéro pour repartir sur des identifiants propres
+  // (ex: le prochain agent redevient le n°00001 plutôt que de continuer après les
+  // comptes de test supprimés) — no-op silencieux si sqlite_sequence n'existe pas encore
+  // (base jamais utilisée).
+  try {
+    db.prepare(`DELETE FROM sqlite_sequence WHERE name IN (${tables.map(() => '?').join(',')})`).run(...tables);
+  } catch { /* sqlite_sequence pas encore créée — rien à faire */ }
+
+  return {
+    status: 200,
+    data: {
+      message: `Base réinitialisée : ${counts.users} compte(s), ${counts.agents} agent(s), ${counts.deposits} dépôt(s), ${counts.cashouts} retrait(s), ${counts.vipPurchases} achat(s) VIP et ${counts.agentRefills} renflouement(s) supprimés. Les réglages (thème, logo, contact WhatsApp) sont conservés.`
+    }
+  };
+}

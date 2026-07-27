@@ -547,6 +547,14 @@ const server = http.createServer(async (req, res) => {
       return sendJson(res, status, data);
     }
 
+    // Réinitialisation des données de test (avant un vrai lancement) — irréversible, voir
+    // adminRoutes.resetTestData pour le détail de ce qui est supprimé/conservé.
+    if (pathname === '/api/admin/reset-test-data' && method === 'POST') {
+      if (!requireAdmin(req, res)) return;
+      const { status, data } = adminRoutes.resetTestData(body);
+      return sendJson(res, status, data);
+    }
+
     if (pathname === '/api/admin/accounts/lookup' && method === 'GET') {
       if (!requireAdmin(req, res)) return;
       const { status, data } = accountRoutes.lookupAccount(url.searchParams.get('phone'));

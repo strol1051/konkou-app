@@ -641,6 +641,11 @@ function renderSettingsSection() {
       <button class="primary" id="topbar-bg-image-apply-btn" type="button">Envoyer et appliquer</button>
       ${state.topbarBgImage ? `<button class="secondary" id="topbar-bg-image-reset-btn" type="button">Retirer (revenir au dégradé du thème)</button>` : ''}
     </div>
+    <div class="card" style="border:2px solid var(--red);">
+      <h2 style="color:var(--red);">⚠️ Zone de danger</h2>
+      <p style="font-size:13px;">Supprime définitivement TOUTES les données créées pendant les essais : comptes joueur/agent, transactions, dépôts, retraits, VIP, renflouements, sessions de jeu, codes de vérification en attente. Les réglages ci-dessus (thème, logo, contact WhatsApp) sont conservés. <strong>Irréversible</strong> — à utiliser une seule fois, juste avant le vrai lancement.</p>
+      <button class="tile" id="reset-test-data-btn" style="background:rgba(210,16,52,0.25); color:var(--red); width:100%; font-weight:800;">🗑️ Réinitialiser toutes les données de test</button>
+    </div>
   `;
 }
 
@@ -988,6 +993,30 @@ function bind() {
         setState({ topbarBgImage: '', success: data.message, error: '' });
       } catch (err) {
         setState({ error: err.message });
+      }
+    });
+  }
+  // Zone de danger — double confirmation volontairement redondante avec le backend
+  // (voir adminRoutes.resetTestData) : un confirm() de résumé, puis un prompt() qui
+  // exige de retaper "SUPPRIMER" au clavier. Deux clics accidentels ne suffisent pas à
+  // déclencher une suppression irréversible.
+  const resetTestDataBtn = document.getElementById('reset-test-data-btn');
+  if (resetTestDataBtn) {
+    resetTestDataBtn.addEventListener('click', async () => {
+      const summary = 'Ceci supprime DÉFINITIVEMENT tous les comptes joueur/agent, transactions, dépôts, retraits, VIP et renflouements (les réglages sont conservés). Irréversible. Continuer ?';
+      if (!confirm(summary)) return;
+      const typed = prompt('Pour confirmer, tapez exactement : SUPPRIMER');
+      if (typed === null) return; // annulé
+      if (typed !== 'SUPPRIMER') {
+        setState({ error: 'Confirmation incorrecte — action annulée, rien n\'a été supprimé.' });
+        return;
+      }
+      setState({ loading: true, error: '' });
+      try {
+        const data = await api('/admin/reset-test-data', { method: 'POST', body: { confirm: typed } });
+        setState({ success: data.message, error: '', loading: false });
+      } catch (err) {
+        setState({ error: err.message, loading: false });
       }
     });
   }
