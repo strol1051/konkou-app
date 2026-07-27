@@ -139,6 +139,16 @@ Avant de proposer cette fonctionnalité à de vrais joueurs avec de l'argent ré
 
 Ça a aussi une incidence directe sur toute future soumission sur l'App Store ou le Play Store (voir la discussion sur le sujet plus haut dans cette conversation) : les apps avec de l'argent réel en jeu selon un résultat de jeu d'habileté tombent généralement dans une catégorie de review plus stricte ("real money skill gaming"), avec restriction géographique obligatoire et parfois des exigences de licence supplémentaires.
 
+## Limite de temps par partie
+
+Chaque partie (quiz comme sprint de calcul) est désormais chronométrée, avec un compte à rebours visible pendant que le joueur joue : **60 secondes** pour le quiz (5 questions), **45 secondes** pour le sprint de calcul (8 opérations) — ces deux durées se règlent dans `backend/routes/games.js` (`TRIVIA_TIME_LIMIT_SECONDS`, `PUZZLE_TIME_LIMIT_SECONDS`).
+
+**À l'expiration, la partie se soumet automatiquement** avec les réponses déjà données — les questions restées sans réponse (celle en cours et celles jamais atteintes) comptent comme fausses, exactement comme si le joueur les avait explicitement ratées. Le joueur ne perd donc jamais toute la partie pour un simple dépassement : il garde le bénéfice de ce qu'il avait déjà répondu correctement.
+
+**Vérification côté serveur, pas seulement visuelle.** Le compte à rebours affiché n'aurait aucune valeur s'il pouvait être contourné en modifiant le navigateur (pause de l'onglet, appel direct à l'API après le délai affiché, etc.) — chaque session de jeu retient donc sa propre limite de temps et l'heure de son démarrage, et le serveur refuse toute soumission arrivée plus de `limite + 10 secondes` (marge de tolérance réseau) après le début de la partie, avec le message "Temps écoulé pour cette partie". Cette marge de 10 secondes absorbe la latence réseau normale de l'auto-soumission sans pénaliser un joueur légitime arrivé pile à la limite.
+
+Techniquement, le minuteur affiché ne redémarre jamais d'une question à l'autre : il est fixé une seule fois au tout début de la partie (`deadlineAt`) et le compte à rebours se recalcule toujours à partir de cette échéance fixe — répondre vite à une question ne rallonge donc jamais le temps restant sur les questions suivantes.
+
 ## Réseau d'agents
 
 **Un compte agent est totalement séparé d'un compte joueur.** Devenir agent ne se fait plus depuis le Profil d'un joueur existant : c'est une inscription à part entière, avec son propre lien "🧑‍💼 Vous êtes agent ? Inscrivez-vous ici" sur l'écran de connexion. Un numéro de téléphone est soit joueur, soit agent, jamais les deux — un numéro déjà enregistré et vérifié (dans un rôle ou dans l'autre) est refusé si on tente de le réinscrire dans l'autre rôle. Un compte agent :
@@ -308,7 +318,7 @@ Cette application est un socle fonctionnel complet, pas un produit fini prêt po
 
 ### Limitations connues (non bloquantes, à garder en tête)
 
-- Le sprint de calcul mental annonce une limite de 45 secondes côté serveur, mais rien ne l'impose encore côté interface ni côté serveur — un joueur peut actuellement prendre tout son temps. À corriger si la dimension "rapidité" est importante pour vous.
+- **Corrigé (juillet 2026)** : le sprint de calcul mental annonçait une limite de 45 secondes côté serveur, mais rien ne l'imposait ni côté interface ni côté serveur — un joueur pouvait prendre tout son temps. Voir "Limite de temps par partie" ci-dessous pour la correction (compte à rebours affiché + vérification serveur, sur les deux jeux).
 - La limite de "15 parties/jour" se réinitialise à minuit UTC, pas à minuit heure d'Haïti — concrètement le nouveau quota tombe en fin d'après-midi/soirée locale plutôt qu'à minuit. Facile à ajuster si vous voulez un vrai minuit local.
 - **Corrigé (juillet 2026)** : le service worker (`frontend/sw.js`) servait l'app shell (`app.js`, `styles.css`...) en cache-first, ce qui figeait la version affichée pour toujours après la première visite — un joueur qui avait déjà ouvert l'app une fois ne voyait jamais les mises à jour, même après un redéploiement réussi. Passage en network-first (toujours la dernière version en ligne, le cache ne sert que hors-ligne) + changement du nom de cache (`konkou-shell-v2`) pour forcer une mise à jour immédiate chez les joueurs déjà visités.
 
@@ -434,6 +444,17 @@ Tous les textes visibles par le joueur ont été mis à jour en conséquence ("1
 Testé de bout en bout (scénarios directs sur les fonctions de route, équivalent à des appels API) : frais de dépôt calculé et persisté correctement (5% de 200 HTG → 10 HTG de frais, parties bonus calculées sur le net) ; double demande VIP en attente rejetée (409) ; VIP inactif avant confirmation, actif immédiatement après confirmation par l'agent ; crédit revendable de l'agent inchangé par un achat VIP (contrairement à un dépôt) ; limite quotidienne de parties relevée de 15 à 25 pour un joueur VIP actif (`remainingPlaysToday` le reflète) ; liste et revenus admin incluant bien les nouvelles sources (310 HTG = 300 de vente VIP + 10 de frais de dépôt sur le scénario de test) ; code agent invalide rejeté (400) sur dépôt et sur VIP ; rejet d'une demande VIP fonctionnel ; renouvellement VIP avant échéance ajoutant exactement 30 jours à la date d'expiration existante plutôt que de la remettre à zéro. Démarrage du serveur HTTP et routes `/api/admin/vip` et `/api/admin/revenue` vérifiées via curl.
 
 ⚠️ **Important pour le déploiement** : comme pour les frais de retrait plus haut, `render.yaml` ne met pas à jour un service Render déjà existant. Après avoir poussé ce changement, ajoutez manuellement dans le dashboard Render → votre service → onglet *Environment* : `DEPOSIT_FEE_PERCENT` (5), `VIP_PRICE_HTG` (300), `VIP_DURATION_DAYS` (30), `VIP_EXTRA_DAILY_PLAYS` (10) — sans ces variables, le serveur utilise les mêmes valeurs par défaut codées en dur, donc l'app fonctionne quand même, mais vous ne pourrez pas les ajuster depuis Render sans les ajouter explicitement d'abord.
+
+**Limite de temps par partie, réellement appliquée (juillet 2026).** Le sprint de calcul annonçait déjà un chiffre de 45 secondes depuis le début du projet, mais rien ne l'imposait — voir "Limite de temps par partie" plus haut pour le détail complet :
+- Compte à rebours visible ajouté sur les deux jeux (60s quiz, 45s sprint), avec auto-soumission des réponses déjà données à l'expiration (réponses manquantes = fausses, jamais partie annulée).
+- Vérification serveur ajoutée en plus du visuel : chaque session de jeu retient sa propre limite et son heure de démarrage ; une soumission arrivant plus de 10 secondes (marge réseau) après la limite affichée est refusée (400), pour empêcher de contourner le compte à rebours en manipulant le navigateur.
+- Le minuteur ne redémarre jamais entre deux questions — il est fixé une seule fois au début de la partie.
+
+Testé de bout en bout (scénarios directs sur les fonctions de route) : les deux jeux annoncent bien la bonne limite (60s/45s) ; une soumission immédiate fonctionne normalement (aucune régression) ; une soumission simulée juste après la limite mais dans la marge de 10s est acceptée ; une soumission simulée au-delà de la marge est rejetée (400) sur les deux jeux ; des réponses "manquantes" (valeur sentinelle -1, jamais une réponse valide) comptent bien comme fausses sans fausser le score.
+
+**Écran de résultat de partie amélioré (juillet 2026).** Deux corrections remontées après la mise en place du minuteur ci-dessus :
+- Le nombre de parties gratuites restantes aujourd'hui (et de parties bonus disponibles) s'affiche de nouveau après une partie, sur l'écran de résultat lui-même — il n'avait jamais été présent à cet endroit précis (seulement pendant la partie), ce qui le rendait invisible juste au moment où le joueur veut savoir s'il peut enchaîner.
+- Le bouton "Retour à l'accueil" en fin de partie est remplacé par une carte "🎮 Jouer une nouvelle partie" avec les deux jeux directement proposés (mêmes tuiles que sur l'Accueil) — le joueur enchaîne une nouvelle partie sans revenir à l'écran d'Accueil complet. La barre d'onglets en bas reste toujours accessible pour y revenir manuellement si besoin.
 
 ## Structure du projet
 

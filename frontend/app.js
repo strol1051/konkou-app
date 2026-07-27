@@ -337,6 +337,12 @@ async function refreshProfile() {
 
 // ---------- RENDER ROOT ----------
 function render() {
+  // Le timer de partie (voir "GAMES" plus bas) est relancé à chaque rendu à partir de
+  // state.game.deadlineAt (fixé une fois au début de la partie) plutôt que jamais réinitialisé
+  // à chaque question — ça évite d'empiler plusieurs setInterval au fil des re-rendus
+  // (un par réponse donnée) tout en gardant un compte à rebours exact.
+  clearGameTimer();
+
   if (!state.token) {
     APP.innerHTML = renderAuth();
     bindAuthEvents();
@@ -370,6 +376,10 @@ function render() {
   const content = document.getElementById('view-content');
   content.innerHTML = renderView();
   bindViewEvents();
+
+  if ((state.view === 'trivia' || state.view === 'puzzle') && state.game && !state.game.result && state.game.deadlineAt) {
+    startGameTimerTick();
+  }
 }
 
 function tabBtn(view, icon, label) {
@@ -705,6 +715,7 @@ function renderHome() {
       <p>3. Cumulez et demandez un retrait en espèces chez notre agent.</p>
       <p>4. Plus de parties gratuites aujourd'hui ? Déposez chez l'agent pour des parties bonus (onglet Portefeuille) — cet argent achète des parties, il n'est pas retirable.</p>
       <p>5. Avant chaque partie, vous pouvez miser entre 100 et 2500 de vos points : bon score, la mise augmente jusqu'à 15% ; mauvais score, elle diminue jusqu'à 15%. Optionnel — vous pouvez toujours jouer sans miser.</p>
+      <p>6. Chaque partie est chronométrée (60 secondes pour le quiz, 45 pour le sprint de calcul) : le temps s'affiche pendant que vous jouez, et vos réponses sont soumises automatiquement à zéro — les questions sans réponse comptent comme fausses.</p>
     </div>
   `;
 }
@@ -778,7 +789,12 @@ async function startGame(type, stake) {
       index: 0,
       answers: [],
       result: null,
+      submitting: false,
       timeLimitSeconds: data.timeLimitSeconds || null,
+      // Fixé une seule fois au début de la partie — le compte à rebours affiché en
+      // recalcule toujours à partir de cette échéance fixe, jamais réinitialisé question
+      // par question (voir startGameTimerTick()).
+      deadlineAt: data.timeLimitSeconds ? Date.now() + data.timeLimitSeconds * 1000 : null,
       usingBonusPlay: !!data.usingBonusPlay,
       remainingPlaysToday: data.remainingPlaysToday,
       stake: data.stake || 0,
@@ -799,6 +815,14 @@ function renderGameScreen(type) {
   if (g.result) {
     const r = g.result;
     const staked = r.stake > 0;
+    const remainingAfter = g.remainingPlaysToday;
+    const remainingAfterNote = remainingAfter !== undefined && remainingAfter !== null
+      ? `<p style="font-size:12px; color:var(--muted);">🎮 Parties gratuites restantes aujourd'hui : ${remainingAfter}</p>`
+      : '';
+    const bonusAfter = typeof r.bonusPlays === 'number' ? r.bonusPlays : null;
+    const bonusAfterNote = bonusAfter !== null
+      ? `<p style="font-size:12px; color:var(--muted);">🎟️ ${bonusAfter} partie(s) bonus disponible(s)</p>`
+      : '';
     return `
       <div class="card">
         <h2>${type === 'trivia' ? '🧠 Résultat du quiz' : '🔢 Résultat du sprint'}</h2>
@@ -809,8 +833,16 @@ function renderGameScreen(type) {
             (<strong style="color:${r.stakeDelta >= 0 ? 'var(--green)' : 'var(--red)'}">${r.stakeDelta >= 0 ? '+' : ''}${r.stakeDelta}</strong>)</p>
         ` : ''}
         <p>Nouveau solde : <strong>${r.newBalance} pts</strong></p>
+        ${remainingAfterNote}
+        ${bonusAfterNote}
       </div>
-      <button class="primary" id="back-home">Retour à l'accueil</button>
+      <div class="card">
+        <h2>🎮 Jouer une nouvelle partie</h2>
+        <div class="grid-2">
+          <button class="tile" data-start="trivia"><span class="emoji">🧠</span>Quiz culture générale</button>
+          <button class="tile" data-start="puzzle"><span class="emoji">🔢</span>Sprint de calcul</button>
+        </div>
+      </div>
     `;
   }
 
@@ -823,11 +855,17 @@ function renderGameScreen(type) {
   const remainingNote = remaining !== undefined && remaining !== null
     ? `<p style="text-align:center; font-size:12px; color:var(--muted);">🎮 Parties gratuites restantes aujourd'hui : ${remaining}</p>`
     : '';
+  // Placeholder recalculé immédiatement par startGameTimerTick() (voir render()) — évite
+  // d'afficher un "--:--" vide pendant la fraction de seconde avant le premier tick.
+  const timerNote = g.deadlineAt
+    ? `<p id="game-timer" style="text-align:center; font-size:16px; font-weight:800; color:var(--text); margin:0 0 8px;">⏱️ --:--</p>`
+    : '';
 
   if (type === 'trivia') {
     const q = g.items[idx];
     return `
       <div class="progress-dots">${dots}</div>
+      ${timerNote}
       ${bonusNote}
       ${stakeNote}
       ${remainingNote}
@@ -845,6 +883,7 @@ function renderGameScreen(type) {
   const p = g.items[idx];
   return `
     <div class="progress-dots">${dots}</div>
+    ${timerNote}
     ${bonusNote}
     ${stakeNote}
     ${remainingNote}
@@ -859,16 +898,64 @@ function renderGameScreen(type) {
   `;
 }
 
+// ---------- MINUTEUR DE PARTIE ----------
+// Un seul setInterval actif à la fois (voir clearGameTimer() appelé au début de render()) —
+// relancé à chaque rendu, mais toujours recalculé depuis state.game.deadlineAt (fixé une
+// fois au début de la partie), jamais réinitialisé : répondre à une question ne rallonge
+// jamais le temps restant.
+let gameTimerInterval = null;
+
+function clearGameTimer() {
+  if (gameTimerInterval) { clearInterval(gameTimerInterval); gameTimerInterval = null; }
+}
+
+function startGameTimerTick() {
+  const tick = () => {
+    const g = state.game;
+    if (!g || g.result || !g.deadlineAt) { clearGameTimer(); return; }
+    const el = document.getElementById('game-timer');
+    const remainingMs = g.deadlineAt - Date.now();
+    if (remainingMs <= 0) {
+      clearGameTimer();
+      if (el) el.textContent = '⏱️ 00:00';
+      autoSubmitOnTimeout();
+      return;
+    }
+    if (el) {
+      const totalSec = Math.ceil(remainingMs / 1000);
+      const mm = String(Math.floor(totalSec / 60)).padStart(2, '0');
+      const ss = String(totalSec % 60).padStart(2, '0');
+      el.textContent = `⏱️ ${mm}:${ss}`;
+      el.style.color = totalSec <= 10 ? 'var(--red)' : '';
+    }
+  };
+  tick(); // affichage immédiat, sans attendre le premier intervalle de 250ms
+  gameTimerInterval = setInterval(tick, 250);
+}
+
+// Complète les réponses manquantes (question en cours + celles jamais atteintes) avec -1
+// — une valeur qui ne peut jamais correspondre à une bonne réponse légitime (indices de
+// choix 0-3 pour le quiz, résultats toujours ≥ 0 pour le sprint de calcul), donc toujours
+// comptée comme fausse côté serveur — puis soumet la partie comme si le joueur l'avait
+// terminée avec ce qu'il avait déjà répondu.
+async function autoSubmitOnTimeout() {
+  const g = state.game;
+  if (!g || g.result) return;
+  while (g.answers.length < g.items.length) g.answers.push(-1);
+  await submitGame(g);
+}
+
 function bindGameEvents() {
-  const backBtn = document.getElementById('back-home');
-  if (backBtn) {
-    backBtn.addEventListener('click', async () => {
-      state.game = null;
-      await refreshProfile();
-      setState({ view: 'home' });
+  // Sur l'écran de résultat, "Jouer une nouvelle partie" propose directement les deux jeux
+  // (mêmes tuiles data-start que l'Accueil) plutôt que de forcer un retour à l'Accueil
+  // complet — le joueur reste dans l'enchaînement du jeu. La barre d'onglets en bas reste
+  // toujours disponible pour revenir à l'Accueil manuellement si besoin.
+  document.querySelectorAll('[data-start]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      pendingGameType = btn.dataset.start;
+      setState({ view: 'stakePrompt', error: '' });
     });
-    return;
-  }
+  });
 
   const choices = document.querySelectorAll('[data-choice]');
   choices.forEach(btn => {
@@ -894,20 +981,33 @@ async function answerCurrent(value) {
     g.index++;
     render();
   } else {
-    // submit
-    try {
-      const path = g.type === 'trivia' ? '/games/trivia/submit' : '/games/puzzle/submit';
-      const result = await api(path, { method: 'POST', body: { sessionToken: g.sessionToken, answers: g.answers } });
-      g.result = result;
-      if (state.user) {
-        state.user.points = result.newBalance;
-        if (typeof result.bonusPlays === 'number') state.user.bonusPlays = result.bonusPlays;
-      }
-      localStorage.setItem('konkou_user', JSON.stringify(state.user));
-      render();
-    } catch (err) {
-      setState({ view: 'home', error: err.message });
+    await submitGame(g);
+  }
+}
+
+// Point de soumission unique, utilisé à la fois par la dernière réponse du joueur
+// (answerCurrent) et par l'auto-soumission à l'expiration du minuteur
+// (autoSubmitOnTimeout) — le garde-fou g.submitting évite qu'un timeout arrivant pile au
+// moment où le joueur soumet sa dernière réponse déclenche deux requêtes concurrentes pour
+// la même session (le serveur, lui, refuserait la seconde de toute façon, mais la première
+// réponse réussie ne doit jamais être écrasée par l'erreur de la seconde).
+async function submitGame(g) {
+  if (!g || g.result || g.submitting) return;
+  g.submitting = true;
+  try {
+    const path = g.type === 'trivia' ? '/games/trivia/submit' : '/games/puzzle/submit';
+    const result = await api(path, { method: 'POST', body: { sessionToken: g.sessionToken, answers: g.answers } });
+    g.result = result;
+    if (state.user) {
+      state.user.points = result.newBalance;
+      if (typeof result.bonusPlays === 'number') state.user.bonusPlays = result.bonusPlays;
     }
+    localStorage.setItem('konkou_user', JSON.stringify(state.user));
+    render();
+  } catch (err) {
+    setState({ view: 'home', error: err.message });
+  } finally {
+    g.submitting = false;
   }
 }
 

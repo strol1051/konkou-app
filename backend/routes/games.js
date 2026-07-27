@@ -33,6 +33,21 @@ const POINTS_PER_CORRECT_TRIVIA = 10;
 const POINTS_PER_CORRECT_PUZZLE = 6;
 const SESSION_TTL_MS = 30 * 60 * 1000; // 30 min: a game started but never submitted is abandoned
 
+// Limite de temps visible par partie (juillet 2026) : un compte à rebours s'affiche
+// côté joueur (voir frontend/app.js) et soumet automatiquement les réponses déjà données
+// à l'expiration (les questions restantes comptent comme fausses). 45s pour le sprint de
+// calcul était déjà annoncé par l'API depuis le début mais jamais réellement affiché ni
+// imposé ; 60s pour le quiz est nouveau (5 questions à lire, contre 8 calculs plus rapides
+// à résoudre pour le sprint, d'où un temps par item plus généreux ici).
+const TRIVIA_TIME_LIMIT_SECONDS = 60;
+const PUZZLE_TIME_LIMIT_SECONDS = 45;
+// Marge de tolérance côté serveur entre la fin du compte à rebours et la réception de la
+// soumission automatique (latence réseau, onglet mis en arrière-plan par le navigateur...).
+// Au-delà de limite + marge depuis le début de la partie, la soumission est refusée — ça
+// empêche un joueur de manipuler son navigateur (pause du timer, appel direct à l'API bien
+// après le compte à rebours affiché) pour gagner plus de temps que prévu.
+const SUBMIT_TIME_MARGIN_MS = 10 * 1000;
+
 // Mise optionnelle : le joueur engage entre STAKE_MIN et STAKE_MAX points (dans la limite
 // de son solde) avant de jouer. Le résultat de la partie fait varier cette mise de ±15%
 // selon le score, de façon continue (pas de seuil de réussite/échec net) :
@@ -127,7 +142,8 @@ export function getTrivia(userId, rawStake) {
   const sessionToken = crypto.randomBytes(12).toString('hex');
   activeSessions.set(sessionToken, {
     userId, gameType: 'trivia', correctAnswers: picked.map(q => q.answer),
-    createdAt: Date.now(), usingBonus: allowance.usingBonus, stake: stakeCheck.stake
+    createdAt: Date.now(), usingBonus: allowance.usingBonus, stake: stakeCheck.stake,
+    timeLimitSeconds: TRIVIA_TIME_LIMIT_SECONDS
   });
   return {
     status: 200,
@@ -136,9 +152,18 @@ export function getTrivia(userId, rawStake) {
       questions: picked.map(q => ({ id: q.id, question: q.question, choices: q.choices })),
       remainingPlaysToday: allowance.usingBonus ? allowance.effectiveLimit - allowance.playedToday : allowance.effectiveLimit - allowance.playedToday - 1,
       usingBonusPlay: allowance.usingBonus,
-      stake: stakeCheck.stake
+      stake: stakeCheck.stake,
+      timeLimitSeconds: TRIVIA_TIME_LIMIT_SECONDS
     }
   };
+}
+
+// Rejette une soumission arrivée trop longtemps après le début de la partie (voir
+// SUBMIT_TIME_MARGIN_MS) — anti-triche pour le compte à rebours affiché côté joueur, qui
+// n'a de valeur que si le serveur la fait aussi respecter.
+function checkNotExpired(session) {
+  const allowedMs = session.timeLimitSeconds * 1000 + SUBMIT_TIME_MARGIN_MS;
+  return (Date.now() - session.createdAt) <= allowedMs;
 }
 
 export function submitTrivia(userId, body) {
@@ -146,6 +171,10 @@ export function submitTrivia(userId, body) {
   const session = activeSessions.get(sessionToken);
   if (!session || session.userId !== userId || session.gameType !== 'trivia') {
     return { status: 400, data: { error: 'Session de jeu invalide ou expirée' } };
+  }
+  if (!checkNotExpired(session)) {
+    activeSessions.delete(sessionToken);
+    return { status: 400, data: { error: 'Temps écoulé pour cette partie — trop de temps s\'est écoulé depuis le début.' } };
   }
   if (!Array.isArray(answers) || answers.length !== session.correctAnswers.length) {
     return { status: 400, data: { error: 'Réponses invalides' } };
@@ -213,14 +242,15 @@ export function getPuzzle(userId, rawStake) {
   }
   const sessionToken = crypto.randomBytes(12).toString('hex');
   activeSessions.set(sessionToken, {
-    userId, gameType: 'puzzle', correctAnswers, createdAt: Date.now(), usingBonus: allowance.usingBonus, stake: stakeCheck.stake
+    userId, gameType: 'puzzle', correctAnswers, createdAt: Date.now(), usingBonus: allowance.usingBonus, stake: stakeCheck.stake,
+    timeLimitSeconds: PUZZLE_TIME_LIMIT_SECONDS
   });
   return {
     status: 200,
     data: {
       sessionToken, problems,
       remainingPlaysToday: allowance.usingBonus ? allowance.effectiveLimit - allowance.playedToday : allowance.effectiveLimit - allowance.playedToday - 1,
-      timeLimitSeconds: 45,
+      timeLimitSeconds: PUZZLE_TIME_LIMIT_SECONDS,
       usingBonusPlay: allowance.usingBonus,
       stake: stakeCheck.stake
     }
@@ -232,6 +262,10 @@ export function submitPuzzle(userId, body) {
   const session = activeSessions.get(sessionToken);
   if (!session || session.userId !== userId || session.gameType !== 'puzzle') {
     return { status: 400, data: { error: 'Session de jeu invalide ou expirée' } };
+  }
+  if (!checkNotExpired(session)) {
+    activeSessions.delete(sessionToken);
+    return { status: 400, data: { error: 'Temps écoulé pour cette partie — trop de temps s\'est écoulé depuis le début.' } };
   }
   if (!Array.isArray(answers) || answers.length !== session.correctAnswers.length) {
     return { status: 400, data: { error: 'Réponses invalides' } };
