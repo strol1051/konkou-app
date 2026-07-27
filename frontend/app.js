@@ -702,7 +702,7 @@ function renderHome() {
     <div class="card">
       <h2>Bonjour ${escapeHtml(state.user?.name ?? '')} 👋</h2>
       <p>Jouez chaque jour pour gagner des points, grimper au classement et les retirer en espèces chez notre agent.</p>
-      ${bonusPlays > 0 ? `<p>🎟️ <strong>${bonusPlays}</strong> partie(s) bonus disponible(s) (au-delà de la limite gratuite du jour).</p>` : ''}
+      ${bonusPlays > 0 ? `<p style="font-size:18px; font-weight:800;">🎟️ <strong style="color:var(--green);">${bonusPlays}</strong> partie(s) bonus disponible(s) (au-delà de la limite gratuite du jour).</p>` : ''}
     </div>
     <div class="grid-2">
       <button class="tile" data-start="trivia"><span class="emoji">🧠</span>Quiz culture générale</button>
@@ -817,11 +817,11 @@ function renderGameScreen(type) {
     const staked = r.stake > 0;
     const remainingAfter = g.remainingPlaysToday;
     const remainingAfterNote = remainingAfter !== undefined && remainingAfter !== null
-      ? `<p style="font-size:12px; color:var(--muted);">🎮 Parties gratuites restantes aujourd'hui : ${remainingAfter}</p>`
+      ? `<p style="font-size:18px; font-weight:800; color:var(--text);">🎮 Parties gratuites restantes : <strong style="color:var(--green);">${remainingAfter}</strong></p>`
       : '';
     const bonusAfter = typeof r.bonusPlays === 'number' ? r.bonusPlays : null;
-    const bonusAfterNote = bonusAfter !== null
-      ? `<p style="font-size:12px; color:var(--muted);">🎟️ ${bonusAfter} partie(s) bonus disponible(s)</p>`
+    const bonusAfterNote = bonusAfter !== null && bonusAfter > 0
+      ? `<p style="font-size:18px; font-weight:800; color:var(--text);">🎟️ Parties bonus disponibles : <strong style="color:var(--green);">${bonusAfter}</strong></p>`
       : '';
     return `
       <div class="card">
@@ -853,7 +853,7 @@ function renderGameScreen(type) {
   const stakeNote = g.stake > 0 ? `<p style="text-align:center; font-size:12px; color:var(--muted);">💰 Mise en cours : ${g.stake} pts</p>` : '';
   const remaining = g.remainingPlaysToday;
   const remainingNote = remaining !== undefined && remaining !== null
-    ? `<p style="text-align:center; font-size:12px; color:var(--muted);">🎮 Parties gratuites restantes aujourd'hui : ${remaining}</p>`
+    ? `<p style="text-align:center; font-size:18px; font-weight:800; color:var(--text); margin:0 0 8px;">🎮 Parties gratuites restantes : <strong style="color:var(--green);">${remaining}</strong></p>`
     : '';
   // Placeholder recalculé immédiatement par startGameTimerTick() (voir render()) — évite
   // d'afficher un "--:--" vide pendant la fraction de seconde avant le premier tick.
@@ -1196,7 +1196,7 @@ function walletHtml(data, agents, vip) {
       <p style="font-size:26px; font-weight:800; color:var(--text);">${data.points} pts</p>
       <p>≈ ${data.htgValue} HTG (taux indicatif : 1 pt = ${data.rate} HTG)</p>
       <p style="font-size:12px;">Retrait minimum : ${data.minCashoutHtg} HTG (${minCashoutPoints} pts) · Limite quotidienne : ${data.maxDailyCashoutHtg} HTG (il vous reste ${data.dailyCashoutRemainingHtg} HTG aujourd'hui)</p>
-      ${data.bonusPlays > 0 ? `<p>🎟️ ${data.bonusPlays} partie(s) bonus disponible(s)</p>` : ''}
+      ${data.bonusPlays > 0 ? `<p style="font-size:18px; font-weight:800;">🎟️ <strong style="color:var(--green);">${data.bonusPlays}</strong> partie(s) bonus disponible(s)</p>` : ''}
     </div>
     <div class="card">
       <h2>Demander un retrait en espèces</h2>
