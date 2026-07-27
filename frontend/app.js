@@ -865,6 +865,18 @@ function renderGameScreen(type) {
     const bonusAfterNote = bonusAfter !== null && bonusAfter > 0
       ? `<p style="font-size:18px; font-weight:800; color:var(--game-contrast);">🎟️ Parties bonus disponibles : <strong>${bonusAfter}</strong></p>`
       : '';
+    // Vrai si le joueur ne pourra pas relancer une partie gratuite maintenant (quota du
+    // jour épuisé ET aucune partie bonus en réserve — voir playAllowance() dans
+    // backend/routes/games.js). Dans ce cas seulement, on propose d'acheter des parties
+    // (dépôt chez l'agent) ou de devenir VIP (plus de parties gratuites/jour) juste après
+    // les deux tuiles de jeu, plutôt que de laisser le joueur cliquer dans le vide.
+    const limitReached = remainingAfter !== undefined && remainingAfter !== null && remainingAfter <= 0 && !(bonusAfter > 0);
+    const limitReachedCta = limitReached ? `
+      <div class="grid-2" style="margin-top:8px;">
+        <button class="tile" data-nav-view="wallet"><span class="emoji">🎟️</span>Acheter des points</button>
+        <button class="tile" data-nav-view="wallet"><span class="emoji">👑</span>Devenir VIP</button>
+      </div>
+    ` : '';
     // Temps écoulé (juillet 2026) : traité comme une partie perdue plutôt qu'un résultat
     // normal — 0 point quel que soit ce qui avait déjà été répondu, et une perte fixe de
     // 50% de la mise éventuelle (au lieu de la formule ±15% habituelle) ; voir scoreOutcome()
@@ -891,6 +903,7 @@ function renderGameScreen(type) {
             <button class="tile" data-start="trivia"><span class="emoji">🧠</span>Quiz culture générale</button>
             <button class="tile" data-start="puzzle"><span class="emoji">🔢</span>Sprint de calcul</button>
           </div>
+          ${limitReachedCta}
         </div>
       `;
     }
@@ -916,6 +929,7 @@ function renderGameScreen(type) {
           <button class="tile" data-start="trivia"><span class="emoji">🧠</span>Quiz culture générale</button>
           <button class="tile" data-start="puzzle"><span class="emoji">🔢</span>Sprint de calcul</button>
         </div>
+        ${limitReachedCta}
       </div>
     `;
   }
@@ -1045,6 +1059,13 @@ function bindGameEvents() {
       pendingGameType = btn.dataset.start;
       setState({ view: 'stakePrompt', error: '' });
     });
+  });
+
+  // "Acheter des points" / "Devenir VIP" (affichés uniquement quota épuisé, voir
+  // limitReachedCta ci-dessus) — les deux renvoient vers le Portefeuille, où vivent à la
+  // fois le dépôt chez l'agent (parties bonus) et l'abonnement VIP (voir renderWallet()).
+  document.querySelectorAll('[data-nav-view]').forEach(btn => {
+    btn.addEventListener('click', () => setState({ view: btn.dataset.navView, error: '', success: '' }));
   });
 
   const choices = document.querySelectorAll('[data-choice]');
