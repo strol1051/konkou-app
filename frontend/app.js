@@ -1,5 +1,7 @@
 // Konkou - application front-end (vanilla JS, aucune dépendance / aucun build requis)
 
+import { startGameMusic, stopGameMusic, toggleMusic, isMusicEnabled } from './music.js';
+
 const APP = document.getElementById('app');
 
 // Champ mot de passe avec un bouton "œil" pour basculer masqué/affiché. Un seul listener
@@ -264,7 +266,12 @@ const state = {
 };
 
 function setState(patch) {
+  // Coupe la musique de partie si on quitte l'écran de jeu par un autre moyen que la
+  // fin normale de la partie (ex: onglet "Accueil" cliqué en pleine partie) — la fin
+  // normale/temps écoulé est déjà gérée dans submitGame() (voir music.js).
+  const leavingGame = ('view' in patch) && (state.view === 'trivia' || state.view === 'puzzle') && patch.view !== state.view;
   Object.assign(state, patch);
+  if (leavingGame) stopGameMusic();
   render();
 }
 
@@ -397,6 +404,7 @@ function render() {
   APP.innerHTML = `
     <div class="topbar">
       <img src="${logoUrl}" alt="Konkou" class="topbar-logo">
+      <button type="button" id="music-toggle-btn" aria-label="${isMusicEnabled() ? 'Couper la musique' : 'Activer la musique'}" style="background:none; border:none; font-size:20px; cursor:pointer; line-height:1; padding:4px;">${isMusicEnabled() ? '🔊' : '🔇'}</button>
       <div class="points-pill">${state.user?.points ?? 0} pts</div>
     </div>
     <div class="view" id="view-content"></div>
@@ -411,6 +419,19 @@ function render() {
   document.querySelectorAll('.tabbar button').forEach(btn => {
     btn.addEventListener('click', () => setState({ view: btn.dataset.view, error: '', success: '' }));
   });
+
+  // Icône 🔊/🔇 dans la barre du haut — visible sur tous les écrans (pas seulement en
+  // partie) puisqu'elle mémorise aussi la préférence pour la prochaine partie, même si
+  // le son ne joue concrètement que pendant les questions (voir startGameMusic/
+  // stopGameMusic dans music.js).
+  const musicToggleBtn = document.getElementById('music-toggle-btn');
+  if (musicToggleBtn) {
+    musicToggleBtn.addEventListener('click', () => {
+      const enabled = toggleMusic();
+      musicToggleBtn.textContent = enabled ? '🔊' : '🔇';
+      musicToggleBtn.setAttribute('aria-label', enabled ? 'Couper la musique' : 'Activer la musique');
+    });
+  }
 
   const content = document.getElementById('view-content');
   content.innerHTML = renderView();
@@ -843,6 +864,7 @@ async function startGame(type, stake) {
       startedAt: Date.now()
     };
     pendingGameType = null;
+    startGameMusic();
     setState({ view: type });
   } catch (err) {
     setState({ view: 'stakePrompt', error: err.message });
@@ -1109,6 +1131,7 @@ async function submitGame(g, extraBody = {}) {
     const path = g.type === 'trivia' ? '/games/trivia/submit' : '/games/puzzle/submit';
     const result = await api(path, { method: 'POST', body: { sessionToken: g.sessionToken, answers: g.answers, ...extraBody } });
     g.result = result;
+    stopGameMusic(); // partie terminée (score normal ou temps écoulé) — voir music.js
     if (state.user) {
       state.user.points = result.newBalance;
       if (typeof result.bonusPlays === 'number') state.user.bonusPlays = result.bonusPlays;
