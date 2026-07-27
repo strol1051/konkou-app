@@ -26,9 +26,9 @@ const activeSessions = new Map(); // sessionToken -> { userId, gameType, correct
 // rendre le jeu plus attractif, puis redescendue à 15 — 30 exposait la plateforme à un
 // passif de paiement trop élevé par joueur très actif (jusqu'à ~2940 points/jour possibles
 // avec un score parfait aux deux jeux, soit ~235 HTG/jour de valeur retirable pour un seul
-// joueur). 15 réduit ce plafond de moitié tout en restant nettement plus généreux que la
-// limite d'origine (5) — voir "Comment Konkou génère du revenu" dans README.md.
-const DAILY_LIMIT = 15;
+// joueur). Redescendue une seconde fois à 10 (toujours juillet 2026) pour réduire encore
+// ce plafond — voir "Comment Konkou génère du revenu" dans README.md.
+const DAILY_LIMIT = 10;
 const POINTS_PER_CORRECT_TRIVIA = 10;
 const POINTS_PER_CORRECT_PUZZLE = 6;
 const SESSION_TTL_MS = 30 * 60 * 1000; // 30 min: a game started but never submitted is abandoned

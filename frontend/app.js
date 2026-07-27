@@ -773,7 +773,7 @@ function renderHome() {
     </div>
     <div class="card">
       <h2>Comment ça marche</h2>
-      <p>1. Jouez à un jeu d'habileté (15 parties gratuites/jour et par jeu).</p>
+      <p>1. Jouez à un jeu d'habileté (10 parties gratuites/jour et par jeu).</p>
       <p>2. Gagnez des points selon vos bonnes réponses.</p>
       <p>3. Cumulez et demandez un retrait en espèces chez notre agent.</p>
       <p>4. Plus de parties gratuites aujourd'hui ? Déposez chez l'agent pour des parties bonus (onglet Portefeuille) — cet argent achète des parties, il n'est pas retirable.</p>
@@ -1351,7 +1351,7 @@ function walletHtml(data, agents, vip) {
     </div>
     <div class="card">
       <h2>🎟️ Déposer chez un agent pour des parties bonus</h2>
-      <p style="font-size:13px;">Achetez des parties bonus (au-delà de vos 15 parties gratuites/jour) — cet argent n'est pas retirable, il sert uniquement à jouer. ${data.htgPerBonusPlay} HTG = 1 partie bonus.</p>
+      <p style="font-size:13px;">Achetez des parties bonus (au-delà de vos 10 parties gratuites/jour) — cet argent n'est pas retirable, il sert uniquement à jouer. ${data.htgPerBonusPlay} HTG = 1 partie bonus.</p>
       <p style="font-size:13px;">${escapeHtml(data.depositInfo)}</p>
       <form id="deposit-form">
         <input name="htgAmount" type="number" placeholder="Montant en HTG (${data.minDepositHtg}–${data.maxDepositHtg})" min="${data.minDepositHtg}" max="${data.maxDepositHtg}" required />
