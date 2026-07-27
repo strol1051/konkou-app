@@ -71,6 +71,21 @@ function stakeMultiplier(correctCount, total) {
   return 0.85 + 0.3 * ratio;
 }
 
+// Pénalité sur partie SANS mise (juillet 2026) : jouer gratuitement n'est plus totalement
+// sans risque pour le solde — un score perdant (moins de la moitié de bonnes réponses, ou
+// un timeout) coûte 30% du solde de points du joueur, en plus de ne rapporter aucun/peu de
+// points via POINTS_PER_CORRECT_*. Contrairement à la mise (qui ne fait varier QUE le
+// montant engagé volontairement), cette pénalité s'applique au solde entier et n'est pas
+// optionnelle — voir scoreOutcome et applyNoStakePenalty ci-dessous. Le seuil "perdant"
+// (ratio < 0.5) reprend le point d'équilibre de la formule de mise (stakeMultiplier(0.5) = 1,
+// ni gain ni perte) : en dessous de la moitié de bonnes réponses, on considère la partie
+// perdue.
+const NO_STAKE_LOSS_PERCENT = 30;
+// Un solde à ce niveau ou en dessous bloque les parties gratuites (quotidien inclus) : le
+// joueur ne peut plus jouer qu'avec une partie bonus (achetée via dépôt chez l'agent, voir
+// routes/deposits.js) — voir playAllowance ci-dessous.
+const MIN_POINTS_TO_PLAY_FREE = 50;
+
 // Pénalité de temps écoulé (juillet 2026) : contrairement à un score simplement mauvais
 // (qui suit la formule continue ±15% ci-dessus), une partie qui expire est traitée comme
 // une partie perdue — 0 point gagné quel que soit ce qui avait déjà été répondu
@@ -128,12 +143,20 @@ function todayCount(userId, gameType) {
 function playAllowance(userId, gameType) {
   const playedToday = todayCount(userId, gameType);
   const effectiveLimit = DAILY_LIMIT + (isVipActive(userId) ? getVipExtraDailyPlays() : 0);
-  if (playedToday < effectiveLimit) return { allowed: true, usingBonus: false, playedToday, effectiveLimit };
-  const user = db.prepare('SELECT bonus_plays FROM users WHERE id = ?').get(userId);
+  const user = db.prepare('SELECT points, bonus_plays FROM users WHERE id = ?').get(userId);
+  // En dessous du seuil, aucune partie gratuite (même dans le quota quotidien) : il faut
+  // dépenser une partie bonus, achetée via dépôt chez l'agent.
+  const belowMinPoints = !user || user.points <= MIN_POINTS_TO_PLAY_FREE;
+
+  if (playedToday < effectiveLimit && !belowMinPoints) {
+    return { allowed: true, usingBonus: false, playedToday, effectiveLimit };
+  }
   if (!user || user.bonus_plays < 1) {
     return {
       allowed: false,
-      error: `Limite quotidienne atteinte (${effectiveLimit} parties/jour). Revenez demain, devenez VIP, ou déposez chez l'agent pour des parties bonus.`
+      error: belowMinPoints
+        ? `Solde de points trop faible (${user ? user.points : 0} pts, minimum ${MIN_POINTS_TO_PLAY_FREE} requis pour jouer gratuitement) — déposez chez l'agent pour obtenir des parties bonus.`
+        : `Limite quotidienne atteinte (${effectiveLimit} parties/jour). Revenez demain, devenez VIP, ou déposez chez l'agent pour des parties bonus.`
     };
   }
   return { allowed: true, usingBonus: true, playedToday, effectiveLimit };
@@ -202,7 +225,30 @@ function scoreOutcome(session, answers, timedOutFlag, pointsPerCorrect) {
     }
   }
 
-  return { correctCount, total, pointsEarned, stakeResult, stakeDelta, isTimeout };
+  // "Perdu" pour une partie SANS mise : timeout, ou moins de la moitié de bonnes réponses
+  // (même seuil que le point d'équilibre de la formule de mise ci-dessus). N'a d'effet que
+  // si session.stake === 0 — voir applyNoStakePenalty, appelé séparément par les routes
+  // submit* une fois le solde à jour avec pointsEarned.
+  const lostWithoutStake = session.stake === 0 && (isTimeout || (total > 0 && correctCount / total < 0.5));
+
+  return { correctCount, total, pointsEarned, stakeResult, stakeDelta, isTimeout, lostWithoutStake };
+}
+
+// Applique la pénalité de 30% (NO_STAKE_LOSS_PERCENT) au solde de points actuel du joueur
+// quand une partie sans mise est perdue — voir la note sur NO_STAKE_LOSS_PERCENT plus haut.
+// Appelée après que pointsEarned ait déjà été crédité, donc la pénalité porte bien sur le
+// solde "après cette partie", comme le fait la mise sur son propre montant. Retourne le
+// montant déduit (0 si aucune pénalité), pour que l'appelant puisse l'inclure dans la
+// réponse et la transaction associée.
+function applyNoStakePenalty(userId, lostWithoutStake, gameTypeNote) {
+  if (!lostWithoutStake) return 0;
+  const user = db.prepare('SELECT points FROM users WHERE id = ?').get(userId);
+  const penalty = Math.round((user?.points || 0) * NO_STAKE_LOSS_PERCENT / 100);
+  if (penalty <= 0) return 0;
+  db.prepare('UPDATE users SET points = max(0, points - ?) WHERE id = ?').run(penalty, userId);
+  db.prepare('INSERT INTO transactions (user_id, type, amount, note) VALUES (?, ?, ?, ?)')
+    .run(userId, 'loss_no_stake', -penalty, `Partie ${gameTypeNote} perdue sans mise — -${NO_STAKE_LOSS_PERCENT}% du solde (-${penalty} pts)`);
+  return penalty;
 }
 
 export function submitTrivia(userId, body) {
@@ -219,7 +265,7 @@ export function submitTrivia(userId, body) {
     return { status: 400, data: { error: 'Réponses invalides' } };
   }
 
-  const { correctCount, total, pointsEarned, stakeResult, stakeDelta, isTimeout } =
+  const { correctCount, total, pointsEarned, stakeResult, stakeDelta, isTimeout, lostWithoutStake } =
     scoreOutcome(session, answers, timedOut, POINTS_PER_CORRECT_TRIVIA);
 
   db.prepare('INSERT INTO game_sessions (user_id, game_type, score, points_earned) VALUES (?, ?, ?, ?)')
@@ -240,6 +286,8 @@ export function submitTrivia(userId, body) {
         : `Mise de ${session.stake} pts (${correctCount}/${total}) → ${stakeResult} pts (${stakeDelta >= 0 ? '+' : ''}${stakeDelta})`);
   }
 
+  const noStakePenalty = applyNoStakePenalty(userId, lostWithoutStake, 'de quiz');
+
   if (session.usingBonus) {
     db.prepare('UPDATE users SET bonus_plays = bonus_plays - 1 WHERE id = ? AND bonus_plays > 0').run(userId);
   }
@@ -249,7 +297,7 @@ export function submitTrivia(userId, body) {
     status: 200,
     data: {
       correctCount, total, pointsEarned, timedOut: isTimeout,
-      stake: session.stake, stakeResult, stakeDelta,
+      stake: session.stake, stakeResult, stakeDelta, noStakePenalty,
       newBalance: user.points, bonusPlays: user.bonus_plays
     }
   };
@@ -307,7 +355,7 @@ export function submitPuzzle(userId, body) {
     return { status: 400, data: { error: 'Réponses invalides' } };
   }
 
-  const { correctCount, total, pointsEarned, stakeResult, stakeDelta, isTimeout } =
+  const { correctCount, total, pointsEarned, stakeResult, stakeDelta, isTimeout, lostWithoutStake } =
     scoreOutcome(session, answers, timedOut, POINTS_PER_CORRECT_PUZZLE);
 
   db.prepare('INSERT INTO game_sessions (user_id, game_type, score, points_earned) VALUES (?, ?, ?, ?)')
@@ -326,6 +374,8 @@ export function submitPuzzle(userId, body) {
         : `Mise de ${session.stake} pts (${correctCount}/${total}) → ${stakeResult} pts (${stakeDelta >= 0 ? '+' : ''}${stakeDelta})`);
   }
 
+  const noStakePenalty = applyNoStakePenalty(userId, lostWithoutStake, 'de calcul');
+
   if (session.usingBonus) {
     db.prepare('UPDATE users SET bonus_plays = bonus_plays - 1 WHERE id = ? AND bonus_plays > 0').run(userId);
   }
@@ -335,7 +385,7 @@ export function submitPuzzle(userId, body) {
     status: 200,
     data: {
       correctCount, total, pointsEarned, timedOut: isTimeout,
-      stake: session.stake, stakeResult, stakeDelta,
+      stake: session.stake, stakeResult, stakeDelta, noStakePenalty,
       newBalance: user.points, bonusPlays: user.bonus_plays
     }
   };

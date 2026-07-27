@@ -878,6 +878,9 @@ function renderGameScreen(type) {
             <p>Mise : <strong>${r.stake} pts</strong> → <strong>${r.stakeResult} pts</strong>
               (<strong style="color:var(--red)">${r.stakeDelta} pts, -50% pour temps écoulé</strong>)</p>
           ` : ''}
+          ${!staked && r.noStakePenalty > 0 ? `
+            <p>Partie sans mise perdue : <strong style="color:var(--red)">-${r.noStakePenalty} pts (-30% du solde)</strong></p>
+          ` : ''}
           <p>Nouveau solde : <strong>${r.newBalance} pts</strong></p>
           ${remainingAfterNote}
           ${bonusAfterNote}
@@ -899,6 +902,9 @@ function renderGameScreen(type) {
         ${staked ? `
           <p>Mise : <strong>${r.stake} pts</strong> → <strong>${r.stakeResult} pts</strong>
             (<strong style="color:${r.stakeDelta >= 0 ? 'var(--green)' : 'var(--red)'}">${r.stakeDelta >= 0 ? '+' : ''}${r.stakeDelta}</strong>)</p>
+        ` : ''}
+        ${!staked && r.noStakePenalty > 0 ? `
+          <p>Partie perdue sans mise : <strong style="color:var(--red)">-${r.noStakePenalty} pts (-30% du solde)</strong></p>
         ` : ''}
         <p>Nouveau solde : <strong>${r.newBalance} pts</strong></p>
         ${remainingAfterNote}
