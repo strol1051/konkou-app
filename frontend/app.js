@@ -86,7 +86,46 @@ function applyThemeVars(themeKey, bgColor) {
   // Couleur de fond personnalisée (indépendante du thème, réglée par l'admin) — surcharge
   // le --bg du thème s'il y en a une, laisse le fond du thème sinon.
   if (bgColor) root.setProperty('--bg', bgColor);
+  updateGameContrastColor();
 }
+
+// Convertit une couleur CSS ("#rgb", "#rrggbb", "rgb(r, g, b)" — ce que renvoie
+// getComputedStyle même quand la valeur d'origine était un hex) en triplet [r, g, b], ou
+// null si le format n'est pas reconnu.
+function parseColorToRgb(str) {
+  const s = String(str || '').trim();
+  let m = s.match(/^#([0-9a-f]{3})$/i);
+  if (m) return m[1].split('').map(c => parseInt(c + c, 16));
+  m = s.match(/^#([0-9a-f]{6})$/i);
+  if (m) return [m[1].slice(0, 2), m[1].slice(2, 4), m[1].slice(4, 6)].map(h => parseInt(h, 16));
+  m = s.match(/^rgba?\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)/i);
+  if (m) return [parseInt(m[1], 10), parseInt(m[2], 10), parseInt(m[3], 10)];
+  return null;
+}
+
+// Luminance relative standard (WCAG) — sert uniquement à décider si le fond actuel est
+// "pâle" ou "foncé", pas à un calcul de contraste réglementaire précis.
+function relativeLuminance([r, g, b]) {
+  const srgb = [r, g, b].map(v => {
+    const c = v / 255;
+    return c <= 0.03928 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4);
+  });
+  return 0.2126 * srgb[0] + 0.7152 * srgb[1] + 0.0722 * srgb[2];
+}
+
+// Chronomètre de partie + compteurs "Parties restantes/bonus" (voir renderGameScreen,
+// renderHome, walletHtml plus bas) : leur couleur s'adapte au fond actuel plutôt que
+// d'être fixe, pour rester lisible quel que soit le thème/couleur de fond choisi par
+// l'admin — rouge sur fond pâle, blanc sur fond foncé, comme demandé. Recalculé à chaque
+// application de thème (voir applyThemeVars) puisque --bg peut changer (thème saisonnier
+// ou couleur de fond personnalisée).
+function updateGameContrastColor() {
+  const raw = getComputedStyle(document.documentElement).getPropertyValue('--bg');
+  const rgb = parseColorToRgb(raw);
+  const isLight = rgb ? relativeLuminance(rgb) > 0.5 : false;
+  document.documentElement.style.setProperty('--game-contrast', isLight ? '#d21034' : '#ffffff');
+}
+updateGameContrastColor(); // valeur initiale avant même la réponse de /api/theme
 
 function applyThemeParticles(themeKey) {
   const theme = THEMES[themeKey] || THEMES.default;
@@ -427,11 +466,14 @@ function renderLoginRegister() {
         ${isLogin ? "Pas de compte ? S'inscrire" : 'Déjà un compte ? Se connecter'}
       </button>
     </div>
+    <div class="card">
+      <button class="secondary" id="agent-register-link" style="width:100%;">🧑‍💼 Devenir Agent</button>
+      <p style="font-size:12px; color:var(--muted); margin:8px 0 0;">Vous voulez revendre des parties bonus et payer les retraits des joueurs en échange d'une commission ? Inscrivez-vous comme agent — un compte totalement séparé d'un compte joueur.</p>
+    </div>
     <p style="text-align:center; color:var(--muted); font-size:12px;">
       En vous inscrivant vous recevez 100 points de bienvenue. La confirmation se fait par WhatsApp.
     </p>
     <button class="link-btn" id="contact-link" style="display:block; margin:6px auto 0; text-align:center;">📞 Nous contacter</button>
-    <button class="link-btn" id="agent-register-link" style="display:block; margin:10px auto 0; text-align:center;">🧑‍💼 Vous êtes agent ? Inscrivez-vous ici</button>
   `;
 }
 
@@ -702,7 +744,7 @@ function renderHome() {
     <div class="card">
       <h2>Bonjour ${escapeHtml(state.user?.name ?? '')} 👋</h2>
       <p>Jouez chaque jour pour gagner des points, grimper au classement et les retirer en espèces chez notre agent.</p>
-      ${bonusPlays > 0 ? `<p style="font-size:18px; font-weight:800;">🎟️ <strong style="color:var(--green);">${bonusPlays}</strong> partie(s) bonus disponible(s) (au-delà de la limite gratuite du jour).</p>` : ''}
+      ${bonusPlays > 0 ? `<p style="font-size:18px; font-weight:800; color:var(--game-contrast);">🎟️ <strong>${bonusPlays}</strong> partie(s) bonus disponible(s) (au-delà de la limite gratuite du jour).</p>` : ''}
     </div>
     <div class="grid-2">
       <button class="tile" data-start="trivia"><span class="emoji">🧠</span>Quiz culture générale</button>
@@ -817,11 +859,11 @@ function renderGameScreen(type) {
     const staked = r.stake > 0;
     const remainingAfter = g.remainingPlaysToday;
     const remainingAfterNote = remainingAfter !== undefined && remainingAfter !== null
-      ? `<p style="font-size:18px; font-weight:800; color:var(--text);">🎮 Parties gratuites restantes : <strong style="color:var(--green);">${remainingAfter}</strong></p>`
+      ? `<p style="font-size:18px; font-weight:800; color:var(--game-contrast);">🎮 Parties gratuites restantes : <strong>${remainingAfter}</strong></p>`
       : '';
     const bonusAfter = typeof r.bonusPlays === 'number' ? r.bonusPlays : null;
     const bonusAfterNote = bonusAfter !== null && bonusAfter > 0
-      ? `<p style="font-size:18px; font-weight:800; color:var(--text);">🎟️ Parties bonus disponibles : <strong style="color:var(--green);">${bonusAfter}</strong></p>`
+      ? `<p style="font-size:18px; font-weight:800; color:var(--game-contrast);">🎟️ Parties bonus disponibles : <strong>${bonusAfter}</strong></p>`
       : '';
     // Temps écoulé (juillet 2026) : traité comme une partie perdue plutôt qu'un résultat
     // normal — 0 point quel que soit ce qui avait déjà été répondu, et une perte fixe de
@@ -879,14 +921,17 @@ function renderGameScreen(type) {
   const stakeNote = g.stake > 0 ? `<p style="text-align:center; font-size:12px; color:var(--muted);">💰 Mise en cours : ${g.stake} pts</p>` : '';
   const remaining = g.remainingPlaysToday;
   const remainingNote = remaining !== undefined && remaining !== null
-    ? `<p style="text-align:center; font-size:18px; font-weight:800; color:var(--text); margin:0 0 8px;">🎮 Parties gratuites restantes : <strong style="color:var(--green);">${remaining}</strong></p>`
+    ? `<p style="text-align:center; font-size:18px; font-weight:800; color:var(--game-contrast); margin:0 0 8px;">🎮 Parties gratuites restantes : <strong>${remaining}</strong></p>`
     : '';
   // Placeholder recalculé immédiatement par startGameTimerTick() (voir render()) — évite
   // d'afficher un "--:--" vide pendant la fraction de seconde avant le premier tick.
   // Bien plus grand/visible (juillet 2026) qu'à sa première version (16px, discret) — le
-  // joueur doit voir le temps restant sans effort, en jeu comme sur écran mobile.
+  // joueur doit voir le temps restant sans effort, en jeu comme sur écran mobile. Couleur
+  // adaptative (--game-contrast, voir updateGameContrastColor) : rouge sur fond pâle,
+  // blanc sur fond foncé — sauf dans les 10 dernières secondes, toujours en rouge plein
+  // sur fond rouge (voir startGameTimerTick), pour une urgence visible quel que soit le thème.
   const timerNote = g.deadlineAt
-    ? `<p id="game-timer" style="text-align:center; font-size:44px; font-weight:900; letter-spacing:1px; color:var(--text); margin:0 0 10px; padding:10px 0; border-radius:16px; background:rgba(0,0,0,0.28);">⏱️ --:--</p>`
+    ? `<p id="game-timer" style="text-align:center; font-size:44px; font-weight:900; letter-spacing:1px; color:var(--game-contrast); margin:0 0 10px; padding:10px 0; border-radius:16px; background:rgba(0,0,0,0.28);">⏱️ --:--</p>`
     : '';
 
   if (type === 'trivia') {
@@ -954,7 +999,16 @@ function startGameTimerTick() {
       const mm = String(Math.floor(totalSec / 60)).padStart(2, '0');
       const ss = String(totalSec % 60).padStart(2, '0');
       el.textContent = `⏱️ ${mm}:${ss}`;
-      el.style.color = totalSec <= 10 ? 'var(--red)' : '';
+      // Dans les 10 dernières secondes, un badge rouge plein + texte blanc reste visible
+      // et alarmant quel que soit le thème — sinon --game-contrast (rouge/blanc selon le
+      // fond) s'applique déjà via le style inline posé au premier rendu de l'écran.
+      if (totalSec <= 10) {
+        el.style.background = '#d21034';
+        el.style.color = '#ffffff';
+      } else {
+        el.style.background = 'rgba(0,0,0,0.28)';
+        el.style.color = 'var(--game-contrast)';
+      }
     }
   };
   tick(); // affichage immédiat, sans attendre le premier intervalle de 250ms
@@ -1226,7 +1280,7 @@ function walletHtml(data, agents, vip) {
       <p style="font-size:26px; font-weight:800; color:var(--text);">${data.points} pts</p>
       <p>≈ ${data.htgValue} HTG (taux indicatif : 1 pt = ${data.rate} HTG)</p>
       <p style="font-size:12px;">Retrait minimum : ${data.minCashoutHtg} HTG (${minCashoutPoints} pts) · Limite quotidienne : ${data.maxDailyCashoutHtg} HTG (il vous reste ${data.dailyCashoutRemainingHtg} HTG aujourd'hui)</p>
-      ${data.bonusPlays > 0 ? `<p style="font-size:18px; font-weight:800;">🎟️ <strong style="color:var(--green);">${data.bonusPlays}</strong> partie(s) bonus disponible(s)</p>` : ''}
+      ${data.bonusPlays > 0 ? `<p style="font-size:18px; font-weight:800; color:var(--game-contrast);">🎟️ <strong>${data.bonusPlays}</strong> partie(s) bonus disponible(s)</p>` : ''}
     </div>
     <div class="card">
       <h2>Demander un retrait en espèces</h2>
