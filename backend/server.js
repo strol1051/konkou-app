@@ -1,8 +1,9 @@
 import http from 'node:http';
 import fs from 'node:fs';
 import path from 'node:path';
+import crypto from 'node:crypto';
 import { fileURLToPath } from 'node:url';
-import { loadEnv, sendJson, readJsonBody } from './utils.js';
+import { loadEnv, sendJson, readJsonBody, clientIp, rateLimit, SECURITY_HEADERS } from './utils.js';
 import { getUserId, isAdmin } from './middleware/auth.js';
 import * as authRoutes from './routes/auth.js';
 import * as gamesRoutes from './routes/games.js';
@@ -18,7 +19,30 @@ import * as themeRoutes from './routes/theme.js';
 import * as vipRoutes from './routes/vip.js';
 
 loadEnv();
-process.env.JWT_SECRET = process.env.JWT_SECRET || 'konkou_dev_secret_change_in_production';
+
+// Valeurs de démo livrées dans backend/.env (voir ce fichier) — jamais à utiliser telles
+// quelles pour un déploiement réel puisqu'elles sont publiques (visibles dans ce dépôt).
+const DEMO_JWT_SECRET = 'konkou_dev_secret_change_in_production';
+const DEMO_ADMIN_PASSWORD = 'changeme_admin_password';
+
+if (!process.env.JWT_SECRET) {
+  // Ancien comportement : retomber silencieusement sur une chaîne fixe codée en dur ici.
+  // C'était dangereux dès lors que JWT_SECRET n'est configuré nulle part (ni variable
+  // d'environnement réelle, ni backend/.env présent) : n'importe qui lisant ce fichier
+  // sur le dépôt pouvait alors forger des tokens valides, y compris admin. On génère
+  // désormais un secret aléatoire propre à ce process — les sessions ne survivront pas à
+  // un redémarrage tant que JWT_SECRET n'est pas explicitement configuré, mais c'est un
+  // compromis délibéré : "tout le monde est déconnecté" est un mode d'échec sûr, "un
+  // secret de signature public" ne l'est pas.
+  process.env.JWT_SECRET = crypto.randomBytes(32).toString('hex');
+  console.warn('⚠️  JWT_SECRET non configuré — secret aléatoire généré pour cette session uniquement (déconnexion de tous les comptes au prochain redémarrage). Configurez JWT_SECRET (voir render.yaml / README.md) pour un déploiement réel.');
+} else if (process.env.JWT_SECRET === DEMO_JWT_SECRET) {
+  console.warn('⚠️  JWT_SECRET utilise encore la valeur de démo de backend/.env, publique sur ce dépôt — changez-la avant tout usage réel (voir README.md).');
+}
+
+if (process.env.ADMIN_PASSWORD === DEMO_ADMIN_PASSWORD) {
+  console.warn('⚠️  ADMIN_PASSWORD utilise encore la valeur de démo de backend/.env, publique sur ce dépôt — changez-la avant tout usage réel (voir README.md).');
+}
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const FRONTEND_DIR = path.join(__dirname, '..', 'frontend');
@@ -50,7 +74,7 @@ function serveUpload(req, res, pathname) {
   fs.readFile(filePath, (err, content) => {
     if (err) { res.writeHead(404); res.end('Not found'); return; }
     const ext = path.extname(filePath);
-    res.writeHead(200, { 'Content-Type': MIME[ext] || 'application/octet-stream' });
+    res.writeHead(200, { 'Content-Type': MIME[ext] || 'application/octet-stream', ...SECURITY_HEADERS });
     res.end(content);
   });
 }
@@ -65,13 +89,13 @@ function serveStatic(req, res, pathname) {
       // SPA fallback for unknown routes (client-side navigation)
       fs.readFile(path.join(FRONTEND_DIR, 'index.html'), (err2, indexContent) => {
         if (err2) { res.writeHead(404); res.end('Not found'); return; }
-        res.writeHead(200, { 'Content-Type': MIME['.html'] });
+        res.writeHead(200, { 'Content-Type': MIME['.html'], ...SECURITY_HEADERS });
         res.end(indexContent);
       });
       return;
     }
     const ext = path.extname(filePath);
-    res.writeHead(200, { 'Content-Type': MIME[ext] || 'application/octet-stream' });
+    res.writeHead(200, { 'Content-Type': MIME[ext] || 'application/octet-stream', ...SECURITY_HEADERS });
     res.end(content);
   });
 }
@@ -103,6 +127,25 @@ function requireAdmin(req, res) {
 function blockIfAgent(req, res, userId) {
   if (agentsRoutes.isAgentLinked(userId)) {
     sendJson(res, 403, { error: 'Ce numéro est enregistré comme agent — réservé aux opérations agent (recharge/retrait), aucun accès aux jeux, au portefeuille ou au classement.' });
+    return true;
+  }
+  return false;
+}
+
+// Applique une limite de débit pour une route sensible (login, inscription...), en
+// combinant une clé par IP (protège contre un attaquant qui essaie beaucoup de comptes
+// depuis une même machine) avec, si fourni, une clé plus stricte par cible (ex: le
+// numéro de téléphone visé — protège un compte précis contre le brute-force même si
+// l'attaquant change d'IP). Renvoie true (et une réponse 429) si la limite est dépassée.
+function tooManyRequests(req, res, routeKey, { ipMax, ipWindowMs, targetKey, targetMax, targetWindowMs }) {
+  const ip = clientIp(req);
+  const ipCheck = rateLimit(`${routeKey}:ip:${ip}`, ipMax, ipWindowMs);
+  const targetCheck = targetKey
+    ? rateLimit(`${routeKey}:target:${targetKey}`, targetMax, targetWindowMs)
+    : { allowed: true };
+  if (!ipCheck.allowed || !targetCheck.allowed) {
+    const retryAfterSeconds = Math.max(ipCheck.retryAfterSeconds || 0, targetCheck.retryAfterSeconds || 0);
+    sendJson(res, 429, { error: `Trop de tentatives — réessayez dans ${retryAfterSeconds}s.` });
     return true;
   }
   return false;
@@ -145,21 +188,38 @@ const server = http.createServer(async (req, res) => {
     }
 
     if (pathname === '/api/auth/register' && method === 'POST') {
+      // Par IP seulement (pas de "cible" fixe avant création du compte) — limite le
+      // spam de comptes/OTP qui, sinon, inonderait la file "Vérifications" de l'admin.
+      if (tooManyRequests(req, res, 'register', { ipMax: 10, ipWindowMs: 60 * 60 * 1000 })) return;
       const { status, data } = await authRoutes.register(body);
       return sendJson(res, status, data);
     }
 
     if (pathname === '/api/auth/login' && method === 'POST') {
+      // Par IP (limite un attaquant qui essaie beaucoup de numéros) ET par numéro visé
+      // (limite le brute-force d'un compte précis même en changeant d'IP).
+      if (tooManyRequests(req, res, 'login', {
+        ipMax: 20, ipWindowMs: 5 * 60 * 1000,
+        targetKey: body?.phone ? String(body.phone).trim() : null, targetMax: 8, targetWindowMs: 15 * 60 * 1000
+      })) return;
       const { status, data } = authRoutes.login(body);
       return sendJson(res, status, data);
     }
 
     if (pathname === '/api/auth/resend-otp' && method === 'POST') {
+      // Le cooldown de 60s par (téléphone, purpose) dans otp.js empêche déjà le spam
+      // d'un même numéro ; cette limite par IP couvre le cas d'un attaquant qui
+      // enchaînerait des numéros différents.
+      if (tooManyRequests(req, res, 'resend-otp', { ipMax: 20, ipWindowMs: 60 * 60 * 1000 })) return;
       const { status, data } = await authRoutes.resendOtp(body);
       return sendJson(res, status, data);
     }
 
     if (pathname === '/api/auth/forgot-password' && method === 'POST') {
+      if (tooManyRequests(req, res, 'forgot-password', {
+        ipMax: 10, ipWindowMs: 60 * 60 * 1000,
+        targetKey: body?.phone ? String(body.phone).trim() : null, targetMax: 5, targetWindowMs: 60 * 60 * 1000
+      })) return;
       const { status, data } = await authRoutes.forgotPassword(body);
       return sendJson(res, status, data);
     }
@@ -241,6 +301,7 @@ const server = http.createServer(async (req, res) => {
     // Inscription agent dédiée, publique (pas de session requise) — voir
     // agentsRoutes.registerAgent : crée le compte ET la candidature en une étape.
     if (pathname === '/api/agents/register' && method === 'POST') {
+      if (tooManyRequests(req, res, 'agent-register', { ipMax: 10, ipWindowMs: 60 * 60 * 1000 })) return;
       const { status, data } = await agentsRoutes.registerAgent(body);
       return sendJson(res, status, data);
     }
@@ -352,6 +413,10 @@ const server = http.createServer(async (req, res) => {
     }
 
     if (pathname === '/api/admin/login' && method === 'POST') {
+      // La route la plus sensible du serveur — limite volontairement plus stricte que
+      // le login joueur. Un seul mot de passe partagé (voir routes/admin.js) rend le
+      // brute-force particulièrement rentable pour un attaquant sans cette limite.
+      if (tooManyRequests(req, res, 'admin-login', { ipMax: 8, ipWindowMs: 15 * 60 * 1000 })) return;
       const { status, data } = adminRoutes.login(body);
       return sendJson(res, status, data);
     }

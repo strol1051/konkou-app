@@ -64,10 +64,15 @@ export function consumeOtp(phone, purpose, code) {
 }
 
 // Called from the admin panel once the operator has actually received and cross-checked
-// the WhatsApp message. This IS the real proof of phone ownership in this design (the
-// operator sees the sender's number in their own WhatsApp app) — marks the OTP used and
-// returns the row (including any stashed payload) so the caller can apply the side effect.
-export function adminConfirmOtp(phone, purpose) {
+// the WhatsApp message. `code` is what the operator typed in (copied from the WhatsApp
+// message they received) — it MUST match the pending row's code, not just the phone
+// number. This is the real proof of phone ownership in this design (the operator
+// compares the code shown in their own WhatsApp app against this before typing it), so
+// requiring it here — rather than trusting a bare "confirm" click on the phone number
+// alone — is what actually forces that cross-check instead of making it optional.
+// Marks the OTP used and returns the row (including any stashed payload) so the caller
+// can apply the side effect.
+export function adminConfirmOtp(phone, purpose, code) {
   const row = db.prepare(
     `SELECT * FROM otp_codes WHERE phone = ? AND purpose = ? AND used = 0 ORDER BY id DESC LIMIT 1`
   ).get(phone, purpose);
@@ -75,6 +80,10 @@ export function adminConfirmOtp(phone, purpose) {
 
   const expired = Date.now() > new Date(row.expires_at.replace(' ', 'T') + 'Z').getTime();
   if (expired) return { ok: false, error: "Cette demande a expiré côté utilisateur — il doit relancer une demande" };
+
+  if (String(code || '').trim() !== row.code) {
+    return { ok: false, error: 'Code incorrect — comparez avec le message WhatsApp reçu avant de confirmer' };
+  }
 
   db.prepare('UPDATE otp_codes SET used = 1 WHERE id = ?').run(row.id);
   return { ok: true, row };

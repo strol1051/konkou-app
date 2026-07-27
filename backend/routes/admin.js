@@ -90,10 +90,11 @@ export function listVerifications(purposeFilter) {
 }
 
 export function confirmPhoneVerification(body) {
-  const { phone } = body || {};
+  const { phone, code } = body || {};
   if (!phone) return { status: 400, data: { error: 'Numéro requis' } };
+  if (!code) return { status: 400, data: { error: 'Code requis — recopiez le code reçu par WhatsApp pour confirmer' } };
 
-  const result = adminConfirmOtp(phone, 'verify_phone');
+  const result = adminConfirmOtp(phone, 'verify_phone', code);
   if (!result.ok) return { status: 400, data: { error: result.error } };
 
   const user = db.prepare('SELECT id FROM users WHERE phone = ?').get(phone);
@@ -104,10 +105,11 @@ export function confirmPhoneVerification(body) {
 }
 
 export function confirmPasswordReset(body) {
-  const { phone } = body || {};
+  const { phone, code } = body || {};
   if (!phone) return { status: 400, data: { error: 'Numéro requis' } };
+  if (!code) return { status: 400, data: { error: 'Code requis — recopiez le code reçu par WhatsApp pour confirmer' } };
 
-  const result = adminConfirmOtp(phone, 'reset_password');
+  const result = adminConfirmOtp(phone, 'reset_password', code);
   if (!result.ok) return { status: 400, data: { error: result.error } };
 
   const user = db.prepare('SELECT id FROM users WHERE phone = ?').get(phone);

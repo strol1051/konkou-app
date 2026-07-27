@@ -373,6 +373,7 @@ function renderVerificationsSection() {
         <h2>${escapeHtml(v.phone)}</h2>
         <p style="font-size:28px; font-weight:800; letter-spacing:4px; text-align:center;">${escapeHtml(v.code)}</p>
         <p style="font-size:12px;">Demandé le ${escapeHtml(v.requestedAt)} · Expire le ${escapeHtml(v.expiresAt)}</p>
+        <input type="text" inputmode="numeric" maxlength="6" placeholder="Recopiez le code reçu sur WhatsApp" data-verify-code-input="${escapeHtml(v.phone)}" style="text-align:center; letter-spacing:2px; font-weight:700;" />
         <button class="tile" data-confirm-verify="${escapeHtml(v.phone)}" style="background:rgba(37,211,102,0.2); width:100%; margin-bottom:8px;">💬 Confirmer (message reçu sur WhatsApp)</button>
         <button class="tile" data-reject-verify="${escapeHtml(v.phone)}" style="background:rgba(210,16,52,0.2); width:100%;">❌ Refuser</button>
       </div>
@@ -789,7 +790,11 @@ function bind() {
     btn.addEventListener('click', () => { state.verifyPurpose = btn.dataset.verifyPurpose; loadVerifications(); });
   });
   document.querySelectorAll('[data-confirm-verify]').forEach(btn => {
-    btn.addEventListener('click', () => confirmVerification(btn.dataset.confirmVerify));
+    btn.addEventListener('click', () => {
+      const phone = btn.dataset.confirmVerify;
+      const input = document.querySelector(`[data-verify-code-input="${CSS.escape(phone)}"]`);
+      confirmVerification(phone, input ? input.value : '');
+    });
   });
   document.querySelectorAll('[data-reject-verify]').forEach(btn => {
     btn.addEventListener('click', () => rejectVerification(btn.dataset.rejectVerify));
@@ -1068,11 +1073,16 @@ async function actOnCashout(id, action) {
   }
 }
 
-async function confirmVerification(phone) {
-  if (!confirm(`Confirmer avoir reçu et vérifié le message WhatsApp de ${phone} ?`)) return;
+async function confirmVerification(phone, code) {
+  const trimmedCode = String(code || '').trim();
+  if (!trimmedCode) {
+    setState({ error: 'Recopiez le code reçu sur WhatsApp dans le champ prévu avant de confirmer.' });
+    return;
+  }
+  if (!confirm(`Confirmer que le code ${trimmedCode} correspond bien au message WhatsApp reçu de ${phone} ?`)) return;
   try {
     const path = state.verifyPurpose === 'verify_phone' ? '/admin/verifications/confirm-phone' : '/admin/verifications/confirm-reset';
-    const data = await api(path, { method: 'POST', body: { phone } });
+    const data = await api(path, { method: 'POST', body: { phone, code: trimmedCode } });
     setState({ success: data.message, error: '' });
     loadVerifications();
   } catch (err) {
