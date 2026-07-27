@@ -1,6 +1,6 @@
 import crypto from 'node:crypto';
 import db from '../db.js';
-import { getMinDeposit, getMaxDeposit, getHtgPerPlay, getDepositInfo } from './deposits.js';
+import { getMinDeposit, getMaxDeposit, getHtgPerPlay, getPointsPerHtgPurchase, getDepositFeePercent, getDepositInfo } from './deposits.js';
 import { resolveActiveAgentId } from './agents.js';
 
 function getRate() { return parseFloat(process.env.POINTS_TO_HTG_RATE || '0.08'); }
@@ -43,7 +43,7 @@ function todayCashoutHtg(userId) {
 }
 
 export function getWallet(userId) {
-  const user = db.prepare('SELECT points, bonus_plays FROM users WHERE id = ?').get(userId);
+  const user = db.prepare('SELECT points, bonus_plays, non_cashable_points FROM users WHERE id = ?').get(userId);
   const transactions = db.prepare(
     'SELECT id, type, amount, note, created_at FROM transactions WHERE user_id = ? ORDER BY id DESC LIMIT 50'
   ).all(userId);
@@ -51,17 +51,25 @@ export function getWallet(userId) {
     'SELECT id, points, htg_amount, platform_fee_htg, net_payout_htg, method, payout_info, status, requested_at, processed_at FROM cashouts WHERE user_id = ? ORDER BY id DESC'
   ).all(userId);
   const deposits = db.prepare(
-    'SELECT id, htg_amount, plays_granted, code, status, requested_at, processed_at FROM deposits WHERE user_id = ? ORDER BY id DESC'
+    'SELECT id, htg_amount, plays_granted, points_granted, kind, code, status, requested_at, processed_at FROM deposits WHERE user_id = ? ORDER BY id DESC'
   ).all(userId);
   const rate = getRate();
   const maxDaily = getMaxDailyCashoutHtg();
   const usedToday = todayCashoutHtg(userId);
+  // Voir routes/deposits.js (postDeposit) et postCashout ci-dessous : les points achetés
+  // (non_cashable_points) restent définitivement exclus de ce qui est retirable, quel que
+  // soit le solde total.
+  const nonCashablePoints = Math.min(user.non_cashable_points, user.points);
+  const withdrawablePoints = Math.max(0, user.points - nonCashablePoints);
 
   return {
     status: 200,
     data: {
       points: user.points,
+      nonCashablePoints,
+      withdrawablePoints,
       htgValue: Math.round(user.points * rate * 100) / 100,
+      withdrawableHtgValue: Math.round(withdrawablePoints * rate * 100) / 100,
       rate,
       minCashoutHtg: getMinCashoutHtg(),
       maxDailyCashoutHtg: maxDaily,
@@ -74,6 +82,8 @@ export function getWallet(userId) {
       minDepositHtg: getMinDeposit(),
       maxDepositHtg: getMaxDeposit(),
       htgPerBonusPlay: getHtgPerPlay(),
+      pointsPerHtgPurchase: getPointsPerHtgPurchase(),
+      depositFeePercent: getDepositFeePercent(),
       depositInfo: getDepositInfo(),
       deposits,
       cashoutFeeTiers: [
@@ -103,11 +113,18 @@ export function postCashout(userId, body) {
     return { status: 400, data: { error: `Retrait minimum : ${minCashoutHtg} HTG (soit ${Math.ceil(minCashoutHtg / rate)} pts)` } };
   }
 
-  const user = db.prepare('SELECT points, phone_verified FROM users WHERE id = ?').get(userId);
+  const user = db.prepare('SELECT points, phone_verified, non_cashable_points FROM users WHERE id = ?').get(userId);
   if (!user.phone_verified) {
     return { status: 403, data: { error: 'Vérifiez votre numéro de téléphone avant de demander un retrait' } };
   }
   if (user.points < pts) return { status: 400, data: { error: 'Solde de points insuffisant' } };
+  // Les points achetés chez l'agent (non_cashable_points, voir routes/deposits.js) ne
+  // sont jamais retirables, même s'ils font partie du solde total — voir getWallet
+  // ci-dessus pour le même calcul exposé au joueur avant qu'il ne soumette ce formulaire.
+  const withdrawable = Math.max(0, user.points - Math.min(user.non_cashable_points, user.points));
+  if (pts > withdrawable) {
+    return { status: 400, data: { error: `Solde retirable insuffisant — ${withdrawable} pts retirables sur ${user.points} pts au total (le reste vient de points achetés, non retirables)` } };
+  }
 
   const usedToday = todayCashoutHtg(userId);
   if (usedToday + htgAmount > maxDailyHtg) {

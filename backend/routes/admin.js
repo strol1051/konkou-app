@@ -150,7 +150,7 @@ export function rejectPasswordReset(body) {
 export function listDeposits(statusFilter) {
   const status = ['pending', 'confirmed', 'rejected'].includes(statusFilter) ? statusFilter : 'pending';
   const rows = db.prepare(`
-    SELECT d.id, d.htg_amount, d.plays_granted, d.code, d.status, d.requested_at, d.processed_at,
+    SELECT d.id, d.htg_amount, d.plays_granted, d.points_granted, d.kind, d.code, d.status, d.requested_at, d.processed_at,
            u.name as user_name, u.phone as user_phone
     FROM deposits d
     JOIN users u ON u.id = d.user_id
@@ -171,6 +171,16 @@ export function confirmDeposit(body) {
   }
 
   db.prepare("UPDATE deposits SET status = 'confirmed', processed_at = datetime('now') WHERE id = ?").run(id);
+
+  if (deposit.kind === 'points') {
+    // Même invariant que agentConfirmDeposit dans routes/agents.js — voir ce commentaire.
+    db.prepare('UPDATE users SET points = points + ?, non_cashable_points = non_cashable_points + ? WHERE id = ?')
+      .run(deposit.points_granted, deposit.points_granted, deposit.user_id);
+    db.prepare('INSERT INTO transactions (user_id, type, amount, note) VALUES (?, ?, ?, ?)')
+      .run(deposit.user_id, 'deposit_points_confirmed', deposit.points_granted, `Dépôt confirmé — ${deposit.points_granted} points (non retirables) crédités (code ${deposit.code})`);
+    return { status: 200, data: { message: 'Dépôt confirmé, points crédités.' } };
+  }
+
   db.prepare('UPDATE users SET bonus_plays = bonus_plays + ? WHERE id = ?').run(deposit.plays_granted, deposit.user_id);
   db.prepare('INSERT INTO transactions (user_id, type, amount, note) VALUES (?, ?, ?, ?)')
     .run(deposit.user_id, 'deposit_confirmed', 0, `Dépôt confirmé — ${deposit.plays_granted} partie(s) bonus créditée(s) (code ${deposit.code})`);

@@ -393,7 +393,7 @@ function renderDepositsSection() {
     ${state.deposits.length === 0 ? `<div class="card"><p>Aucune demande "${statusLabel(state.statusFilter)}".</p></div>` : state.deposits.map(d => `
       <div class="card">
         <h2>${escapeHtml(d.user_name)} — ${escapeHtml(d.user_phone)}</h2>
-        <p><strong>${d.htg_amount} HTG → ${d.plays_granted} partie(s) bonus</strong></p>
+        <p><strong>${d.htg_amount} HTG → ${d.kind === 'points' ? `${d.points_granted} points` : `${d.plays_granted} partie(s) bonus`}</strong></p>
         <p style="font-size:24px; font-weight:800; letter-spacing:3px;">${escapeHtml(d.code)}</p>
         <p style="font-size:12px;">Demandé le ${escapeHtml(d.requested_at)}${d.processed_at ? ` · Traité le ${escapeHtml(d.processed_at)}` : ''}</p>
         ${d.status === 'pending' ? `

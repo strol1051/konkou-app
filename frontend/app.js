@@ -1335,7 +1335,11 @@ function walletHtml(data, agents, vip) {
         ${state.lastDepositDetails ? `
           <div class="stat-row"><span>Montant versé</span><span>${state.lastDepositDetails.htgAmount} HTG</span></div>
           <div class="stat-row"><span>Frais de service (${state.lastDepositDetails.feePercent}%)</span><span>-${state.lastDepositDetails.platformFeeHtg} HTG</span></div>
+          ${state.lastDepositDetails.kind === 'points' ? `
+          <div class="stat-row"><span><strong>Points accordés (non retirables)</strong></span><span><strong>${state.lastDepositDetails.pointsGranted}</strong></span></div>
+          ` : `
           <div class="stat-row"><span><strong>Parties bonus accordées</strong></span><span><strong>${state.lastDepositDetails.playsGranted}</strong></span></div>
+          `}
         ` : ''}
         <p>${escapeHtml(data.depositInfo)}</p>
         <button class="secondary" id="dismiss-deposit-code">J'ai noté le code</button>
@@ -1358,6 +1362,9 @@ function walletHtml(data, agents, vip) {
       <h2>💰 Solde</h2>
       <p style="font-size:26px; font-weight:800; color:var(--text);">${data.points} pts</p>
       <p>≈ ${data.htgValue} HTG (taux indicatif : 1 pt = ${data.rate} HTG)</p>
+      ${data.nonCashablePoints > 0 ? `
+      <p style="font-size:12px;">Dont <strong>${data.withdrawablePoints} pts retirables</strong> (≈ ${data.withdrawableHtgValue} HTG) et <strong>${data.nonCashablePoints} pts achetés</strong>, non retirables — utilisables uniquement pour jouer.</p>
+      ` : ''}
       <p style="font-size:12px;">Retrait minimum : ${data.minCashoutHtg} HTG (${minCashoutPoints} pts) · Limite quotidienne : ${data.maxDailyCashoutHtg} HTG (il vous reste ${data.dailyCashoutRemainingHtg} HTG aujourd'hui)</p>
       ${data.bonusPlays > 0 ? `<p style="font-size:18px; font-weight:800; color:var(--game-contrast);">🎟️ <strong>${data.bonusPlays}</strong> partie(s) bonus disponible(s)</p>` : ''}
     </div>
@@ -1369,16 +1376,20 @@ function walletHtml(data, agents, vip) {
         return `${t.percent}% (${min}${t.maxHtg ? `–${t.maxHtg}` : '+'} HTG)`;
       }).join(' · ')}</p>
       <form id="cashout-form">
-        <input name="points" type="number" placeholder="Points à retirer" min="${minCashoutPoints}" required />
+        <input name="points" type="number" placeholder="Points à retirer" min="${minCashoutPoints}" max="${data.withdrawablePoints}" required />
         ${agentSelectHtml(agents, 'cashout-agent-select')}
         <button class="primary" type="submit" ${noAgents ? 'disabled' : ''}>Générer mon code de retrait</button>
       </form>
     </div>
     <div class="card">
-      <h2>🎟️ Déposer chez un agent pour des parties bonus</h2>
-      <p style="font-size:13px;">Achetez des parties bonus (au-delà de vos 10 parties gratuites/jour) — cet argent n'est pas retirable, il sert uniquement à jouer. ${data.htgPerBonusPlay} HTG = 1 partie bonus.</p>
+      <h2>🎟️ Acheter chez un agent</h2>
+      <p style="font-size:13px;">Achetez des parties bonus (au-delà de vos 10 parties gratuites/jour) ou des points directement — dans les deux cas cet argent n'est pas retirable, il sert uniquement à jouer. ${data.htgPerBonusPlay} HTG = 1 partie bonus · ${data.pointsPerHtgPurchase} pts par HTG net (après ${data.depositFeePercent}% de frais de service).</p>
       <p style="font-size:13px;">${escapeHtml(data.depositInfo)}</p>
       <form id="deposit-form">
+        <div class="grid-2" style="margin-bottom:12px;">
+          <label class="choice-btn" style="margin-bottom:0; display:flex; align-items:center; gap:8px;"><input type="radio" name="kind" value="plays" checked /> Parties bonus</label>
+          <label class="choice-btn" style="margin-bottom:0; display:flex; align-items:center; gap:8px;"><input type="radio" name="kind" value="points" /> Points</label>
+        </div>
         <input name="htgAmount" type="number" placeholder="Montant en HTG (${data.minDepositHtg}–${data.maxDepositHtg})" min="${data.minDepositHtg}" max="${data.maxDepositHtg}" required />
         ${agentSelectHtml(agents, 'deposit-agent-select')}
         <button class="primary" type="submit" ${noAgents ? 'disabled' : ''}>Générer mon code de dépôt</button>
@@ -1398,7 +1409,7 @@ function walletHtml(data, agents, vip) {
       <h2>Historique des dépôts</h2>
       ${data.deposits.length === 0 ? '<p>Aucune demande.</p>' : data.deposits.map(d => `
         <div class="tx-row">
-          <span>${d.htg_amount} HTG → ${d.plays_granted} partie(s) bonus (code ${escapeHtml(d.code)})</span>
+          <span>${d.htg_amount} HTG → ${d.kind === 'points' ? `${d.points_granted} points` : `${d.plays_granted} partie(s) bonus`} (code ${escapeHtml(d.code)})</span>
           <span>${depositStatusLabel(d.status)}</span>
         </div>
       `).join('')}
@@ -1487,10 +1498,12 @@ function bindWalletEvents() {
         setState({
           lastDepositCode: res.code,
           lastDepositDetails: {
+            kind: res.kind,
             htgAmount: res.htgAmount,
             feePercent: res.feePercent,
             platformFeeHtg: res.platformFeeHtg,
-            playsGranted: res.playsGranted
+            playsGranted: res.playsGranted,
+            pointsGranted: res.pointsGranted
           },
           error: ''
         });
@@ -1787,7 +1800,7 @@ function agentDashboardHtml(dash, commission) {
       <h2>Dépôts à confirmer</h2>
       ${dash.pendingDeposits.length === 0 ? '<p>Aucun dépôt en attente.</p>' : dash.pendingDeposits.map(d => `
         <div class="tx-row" style="flex-direction:column; align-items:stretch; gap:6px; padding:12px 0;">
-          <span>${escapeHtml(d.user_name)} (${escapeHtml(d.user_phone)}) — ${d.htg_amount} HTG → ${d.plays_granted} partie(s) bonus</span>
+          <span>${escapeHtml(d.user_name)} (${escapeHtml(d.user_phone)}) — ${d.htg_amount} HTG → ${d.kind === 'points' ? `${d.points_granted} points` : `${d.plays_granted} partie(s) bonus`}</span>
           <span style="font-weight:800; letter-spacing:2px;">${escapeHtml(d.code)}</span>
           <div class="grid-2">
             <button class="tile" data-agent-deposit-confirm="${d.id}" style="background:rgba(34,197,94,0.2); font-size:13px;">✅ Confirmer</button>

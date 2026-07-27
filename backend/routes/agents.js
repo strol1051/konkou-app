@@ -322,7 +322,7 @@ export function getAgentDashboard(userId) {
   if (!agent) return { status: 403, data: { error: 'Compte agent introuvable ou non actif' } };
 
   const pendingDeposits = db.prepare(`
-    SELECT d.id, d.htg_amount, d.plays_granted, d.code, d.requested_at, u.name as user_name, u.phone as user_phone
+    SELECT d.id, d.htg_amount, d.plays_granted, d.points_granted, d.kind, d.code, d.requested_at, u.name as user_name, u.phone as user_phone
     FROM deposits d JOIN users u ON u.id = d.user_id
     WHERE d.agent_id = ? AND d.status = 'pending' ORDER BY d.requested_at ASC
   `).all(agent.id);
@@ -436,6 +436,18 @@ export function agentConfirmDeposit(userId, body) {
 
   db.prepare("UPDATE deposits SET status = 'confirmed', processed_at = datetime('now') WHERE id = ?").run(id);
   db.prepare('UPDATE agents SET credit_balance = credit_balance - ? WHERE id = ?').run(dep.htg_amount, agent.id);
+
+  if (dep.kind === 'points') {
+    // non_cashable_points suit exactement le même montant que points ici — voir
+    // routes/deposits.js (postDeposit) et routes/wallet.js (postCashout) pour l'invariant
+    // que ça protège : ces points ne pourront jamais être retirés en espèces.
+    db.prepare('UPDATE users SET points = points + ?, non_cashable_points = non_cashable_points + ? WHERE id = ?')
+      .run(dep.points_granted, dep.points_granted, dep.user_id);
+    db.prepare('INSERT INTO transactions (user_id, type, amount, note) VALUES (?, ?, ?, ?)')
+      .run(dep.user_id, 'deposit_points_confirmed', dep.points_granted, `Dépôt confirmé par l'agent ${agent.agent_code} — ${dep.points_granted} points (non retirables) crédités (code ${dep.code})`);
+    return { status: 200, data: { message: 'Dépôt confirmé, points crédités.' } };
+  }
+
   db.prepare('UPDATE users SET bonus_plays = bonus_plays + ? WHERE id = ?').run(dep.plays_granted, dep.user_id);
   db.prepare('INSERT INTO transactions (user_id, type, amount, note) VALUES (?, ?, ?, ?)')
     .run(dep.user_id, 'deposit_confirmed', 0, `Dépôt confirmé par l'agent ${agent.agent_code} — ${dep.plays_granted} partie(s) bonus créditée(s) (code ${dep.code})`);

@@ -233,7 +233,23 @@ for (const stmt of [
   // routes/admin.js (confirmVipPurchase), qui la posent toutes les deux (deux chemins de
   // confirmation possibles pour un même achat VIP), et routes/vip.js (getVipStatus) qui
   // l'expose au joueur.
-  "ALTER TABLE users ADD COLUMN vip_activated_at TEXT"
+  "ALTER TABLE users ADD COLUMN vip_activated_at TEXT",
+  // Achat de points chez l'agent (juillet 2026) — voir routes/deposits.js, postDeposit et
+  // "Pourquoi les dépôts ne sont pas retirables" plus haut. non_cashable_points suit la
+  // portion du solde de points venant d'un achat (et non d'une performance de jeu), pour
+  // qu'elle ne puisse jamais être retirée en espèces : routes/wallet.js (postCashout)
+  // plafonne tout retrait à max(0, points - non_cashable_points), jamais au solde total.
+  // N'est incrémentée QUE lors de la confirmation d'un dépôt de type 'points' (voir
+  // agentConfirmDeposit dans routes/agents.js et confirmDeposit dans routes/admin.js) —
+  // les points gagnés en jouant, en mise ou en parrainage n'y touchent jamais, donc le
+  // solde retirable ne peut qu'augmenter avec ceux-là.
+  "ALTER TABLE users ADD COLUMN non_cashable_points INTEGER NOT NULL DEFAULT 0",
+  // 'plays' (comportement historique, parties bonus) ou 'points' (nouveau, achat direct
+  // de points non retirables) — voir routes/deposits.js, postDeposit.
+  "ALTER TABLE deposits ADD COLUMN kind TEXT NOT NULL DEFAULT 'plays'",
+  // Rempli uniquement quand kind = 'points' (plays_granted reste à 0 dans ce cas, et
+  // inversement) — voir routes/deposits.js, postDeposit.
+  "ALTER TABLE deposits ADD COLUMN points_granted INTEGER NOT NULL DEFAULT 0"
 ]) {
   try { db.exec(stmt); } catch { /* column already exists */ }
 }
