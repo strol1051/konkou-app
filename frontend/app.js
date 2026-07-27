@@ -16,6 +16,25 @@ function pwdField(name, placeholder) {
   `;
 }
 
+// Champ téléphone avec préfixe "+509" fixe (non éditable) — le joueur ne tape que les 8
+// chiffres locaux, qui servent de numéro d'identifiant (voir routes/auth.js, register :
+// c'est ce numéro, une fois combiné au "509" fixe, qui sert de clé unique de compte et
+// qui est comparé à deleted_phones pour le bonus de bienvenue). Utilisé uniquement sur
+// les écrans d'INSCRIPTION (joueur et agent) — la connexion garde un champ libre pour ne
+// pas casser les comptes déjà créés avant ce changement. Le formulaire appelant doit
+// combiner "509" + la valeur soumise avant d'envoyer à l'API (voir bindAuthEvents et
+// bindAgentRegisterEvents plus bas) : le "+509" affiché n'est qu'un préfixe visuel, pas
+// une partie de la valeur du <input>.
+function phoneField(name) {
+  return `
+    <div class="phone-wrap">
+      <span class="phone-prefix" aria-hidden="true">+509</span>
+      <input name="${name}" type="tel" inputmode="numeric" pattern="[0-9]{8}" maxlength="8"
+        placeholder="37123456" title="8 chiffres, sans le +509" required />
+    </div>
+  `;
+}
+
 // Délégué sur #app (persiste à travers tous les re-rendus, contrairement aux listeners
 // posés dans les fonctions bindXEvents qui sont perdus à chaque innerHTML).
 APP.addEventListener('click', (e) => {
@@ -477,7 +496,7 @@ function renderLoginRegister() {
       <h2>${isLogin ? 'Connexion' : 'Créer un compte'}</h2>
       <form id="auth-form">
         ${!isLogin ? `<input name="name" placeholder="Nom complet" required />` : ''}
-        <input name="phone" placeholder="Numéro de téléphone (ex: 50937123456)" required />
+        ${isLogin ? `<input name="phone" placeholder="Numéro de téléphone (ex: 50937123456)" required />` : phoneField('phone')}
         ${pwdField('password', 'Mot de passe (min. 6 caractères)')}
         ${!isLogin ? `<input name="referralCode" placeholder="Code de parrainage (optionnel)" />` : ''}
         <button class="primary" type="submit">${isLogin ? 'Se connecter' : "S'inscrire"}</button>
@@ -509,7 +528,7 @@ function renderAgentRegisterForm() {
       <p style="font-size:13px;">Un agent revend des parties bonus aux joueurs et leur paie leurs retraits en espèces, en échange d'une commission. Ce numéro sera réservé aux opérations agent — il ne pourra pas jouer.</p>
       <p style="font-size:13px;">Conditions : avoir 18 ans ou plus, fournir une pièce d'identité, déposer 7 500 HTG de capital à notre bureau (10% gardé par Konkou, le reste devient votre crédit à revendre).</p>
       <form id="agent-register-form">
-        <input name="phone" placeholder="Numéro de téléphone (ex: 50937123456)" required />
+        ${phoneField('phone')}
         ${pwdField('password', 'Mot de passe (min. 6 caractères)')}
         <input name="lastName" placeholder="Nom" required />
         <input name="firstName" placeholder="Prénom" required />
@@ -652,6 +671,11 @@ function bindAuthEvents() {
     e.preventDefault();
     const fd = new FormData(e.target);
     const payload = Object.fromEntries(fd.entries());
+    // À l'inscription, le champ phone (voir phoneField()) ne contient que les 8 chiffres
+    // locaux — le "+509" affiché n'est qu'un préfixe visuel, on le rajoute ici avant
+    // l'envoi. La connexion garde un champ libre (numéro complet attendu), donc rien à
+    // faire dans ce cas — voir la note dans phoneField() pour le détail du choix.
+    if (state.authMode !== 'login') payload.phone = `509${payload.phone}`;
     try {
       const path = state.authMode === 'login' ? '/auth/login' : '/auth/register';
       const data = await api(path, { method: 'POST', body: payload });
@@ -729,6 +753,7 @@ function bindAgentRegisterEvents() {
   document.getElementById('agent-register-form').addEventListener('submit', async (e) => {
     e.preventDefault();
     const fd = Object.fromEntries(new FormData(e.target).entries());
+    fd.phone = `509${fd.phone}`; // voir la note équivalente sur le formulaire joueur ci-dessus
     try {
       const data = await api('/agents/register', { method: 'POST', body: fd });
       if (data.pendingVerification) {
@@ -777,8 +802,8 @@ function renderHome() {
       <p>2. Gagnez des points selon vos bonnes réponses.</p>
       <p>3. Cumulez et demandez un retrait en espèces chez notre agent.</p>
       <p>4. Plus de parties gratuites aujourd'hui ? Déposez chez l'agent pour des parties bonus (onglet Portefeuille) — cet argent achète des parties, il n'est pas retirable.</p>
-      <p>5. Avant chaque partie, vous pouvez miser entre 100 et 2500 de vos points : bon score, la mise augmente jusqu'à 15% ; mauvais score, elle diminue jusqu'à 15%. Optionnel — vous pouvez toujours jouer sans miser.</p>
-      <p>6. Chaque partie est chronométrée (45 secondes) : le temps s'affiche pendant que vous jouez. Si le temps s'écoule avant la fin, la partie est perdue (0 point) et une mise éventuelle perd 50% — répondez avant la fin du compte à rebours !</p>
+      <p>5. Avant chaque partie, vous pouvez miser entre 100 et 2500 de vos points : score quasi parfait, la mise augmente jusqu'à 10% ; score faible, elle peut diminuer jusqu'à 75%. Optionnel — vous pouvez toujours jouer sans miser.</p>
+      <p>6. Chaque partie est chronométrée (30 secondes) : le temps s'affiche pendant que vous jouez. Si le temps s'écoule avant la fin, la partie est perdue (0 point) et une mise éventuelle perd 50% — répondez avant la fin du compte à rebours !</p>
     </div>
   `;
 }
@@ -806,7 +831,7 @@ function renderStakePrompt() {
     ${state.error ? `<div class="error-banner">${escapeHtml(state.error)}</div>` : ''}
     <div class="card">
       <h2>${pendingGameType === 'trivia' ? '🧠' : '🔢'} ${label}</h2>
-      <p>Vous pouvez miser entre ${STAKE_MIN} et ${STAKE_MAX} points de votre solde (${balance} pts disponibles) avant de jouer. Votre mise varie de ±15% selon votre score : un score parfait la fait gagner 15%, un score nul lui en fait perdre 15%, un score à mi-chemin la laisse inchangée. Les points gagnés normalement par bonne réponse restent les mêmes, avec ou sans mise. ⚠️ Si le temps s'écoule (45 secondes par partie), la partie est perdue et votre mise perd 50% quel que soit votre score en cours — cette règle remplace la formule ci-dessus dans ce cas.</p>
+      <p>Vous pouvez miser entre ${STAKE_MIN} et ${STAKE_MAX} points de votre solde (${balance} pts disponibles) avant de jouer. Votre mise varie selon votre score : un score parfait la fait gagner 10%, un score nul lui en fait perdre 75% — il faut environ 9 bonnes réponses sur 10 pour au moins récupérer sa mise. Les points gagnés normalement par bonne réponse restent les mêmes, avec ou sans mise. ⚠️ Si le temps s'écoule (30 secondes par partie), la partie est perdue et votre mise perd 50% quel que soit votre score en cours — cette règle remplace la formule ci-dessus dans ce cas.</p>
       ${maxStake < STAKE_MIN ? `
         <p class="error-banner">Solde insuffisant (min. ${STAKE_MIN} pts) pour miser — vous pouvez quand même jouer sans mise.</p>
         <button class="primary" id="play-no-stake">Jouer sans mise</button>

@@ -36,11 +36,11 @@ const SESSION_TTL_MS = 30 * 60 * 1000; // 30 min: a game started but never submi
 // Limite de temps visible par partie (juillet 2026) : un compte à rebours s'affiche
 // côté joueur (voir frontend/app.js) et soumet automatiquement les réponses déjà données
 // à l'expiration (les questions restantes comptent comme fausses, voir STAKE_TIMEOUT_LOSS
-// _PERCENT ci-dessous pour la pénalité de mise associée). Même durée (45s) pour les deux
-// jeux, à la demande explicite — initialement 60s pour le quiz, ramené à 45s pour rester
-// cohérent avec le sprint de calcul.
-const TRIVIA_TIME_LIMIT_SECONDS = 45;
-const PUZZLE_TIME_LIMIT_SECONDS = 45;
+// _PERCENT ci-dessous pour la pénalité de mise associée). Même durée pour les deux jeux,
+// à la demande explicite — initialement 60s pour le quiz, ramenée à 45s pour rester
+// cohérente avec le sprint de calcul, puis resserrée une seconde fois à 30s.
+const TRIVIA_TIME_LIMIT_SECONDS = 30;
+const PUZZLE_TIME_LIMIT_SECONDS = 30;
 // Marge de tolérance côté serveur entre la fin du compte à rebours et la réception de la
 // soumission automatique (latence réseau, onglet mis en arrière-plan par le navigateur...).
 // Au-delà de limite + marge depuis le début de la partie, la soumission est refusée — ça
@@ -49,26 +49,28 @@ const PUZZLE_TIME_LIMIT_SECONDS = 45;
 const SUBMIT_TIME_MARGIN_MS = 10 * 1000;
 
 // Mise optionnelle : le joueur engage entre STAKE_MIN et STAKE_MAX points (dans la limite
-// de son solde) avant de jouer. Le résultat de la partie fait varier cette mise de ±15%
-// selon le score, de façon continue (pas de seuil de réussite/échec net) :
-//   ratio = bonnes réponses / total   →   multiplicateur = 0.85 + 0.3 × ratio
-// Un score de 0% renvoie 85% de la mise (perte de 15%), un score de 100% renvoie 115% de
-// la mise (gain de 15%), un score de 50% rend la mise inchangée. Ce mécanisme est distinct
-// et s'ajoute aux points normaux gagnés par bonne réponse (POINTS_PER_CORRECT_*), qui ne
-// changent pas — voir "Mise sur sa performance" dans README.md pour l'avertissement légal :
-// contrairement au reste de l'app, ceci met réellement des points (donc de la valeur HTG
-// retirable) en jeu selon un résultat, ce qui s'apparente à un pari.
-// Corrigé (juillet 2026, revue de rentabilité) : la fourchette était ±30% (0.7 à 1.3). Si
-// les joueurs répondent correctement plus de la moitié du temps en moyenne (probable, vu
-// que chaque question a 4 choix), la mise crée en moyenne PLUS de points qu'elle n'en
-// détruit à l'échelle de tous les joueurs — un coût net pour la plateforme, pas un gain.
-// Resserrée à ±15% pour réduire cette volatilité de moitié, sans retirer l'aspect ludique.
+// de son solde) avant de jouer. Le résultat de la partie fait varier cette mise selon le
+// score, de façon continue (pas de seuil de réussite/échec net) :
+//   ratio = bonnes réponses / total   →   multiplicateur = 0.25 + 0.85 × ratio
+// Un score de 0% renvoie 25% de la mise (perte de 75%), un score de 100% renvoie 110% de
+// la mise (gain de 10%). Ce mécanisme est distinct et s'ajoute aux points normaux gagnés
+// par bonne réponse (POINTS_PER_CORRECT_*), qui ne changent pas — voir "Mise sur sa
+// performance" dans README.md pour l'avertissement légal : contrairement au reste de
+// l'app, ceci met réellement des points (donc de la valeur HTG retirable) en jeu selon un
+// résultat, ce qui s'apparente à un pari.
+// Corrigé (juillet 2026, revue de rentabilité) : la fourchette était ±30% (0.7 à 1.3), puis
+// resserrée à ±15% (0.85 à 1.15, point d'équilibre à 50% de bonnes réponses). Rendue
+// volontairement asymétrique ensuite (-75% à +10%, ce commentaire) — le point d'équilibre
+// (où la mise ne change pas) n'est donc plus à 50% mais à ratio = 0.75/0.85 ≈ 88.2% de
+// bonnes réponses : sous ce score, la mise est perdante, même si le score reste honorable.
+// C'est un choix délibéré qui alourdit nettement le risque du côté du joueur — à surveiller
+// si le taux de mise chute après ce changement (les joueurs pourraient arrêter de miser).
 const STAKE_MIN = 100;
 const STAKE_MAX = 2500;
 
 function stakeMultiplier(correctCount, total) {
   const ratio = total > 0 ? correctCount / total : 0;
-  return 0.85 + 0.3 * ratio;
+  return 0.25 + 0.85 * ratio;
 }
 
 // Pénalité sur partie SANS mise (juillet 2026) : jouer gratuitement n'est plus totalement
@@ -77,9 +79,8 @@ function stakeMultiplier(correctCount, total) {
 // points via POINTS_PER_CORRECT_*. Contrairement à la mise (qui ne fait varier QUE le
 // montant engagé volontairement), cette pénalité s'applique au solde entier et n'est pas
 // optionnelle — voir scoreOutcome et applyNoStakePenalty ci-dessous. Le seuil "perdant"
-// (ratio < 0.5) reprend le point d'équilibre de la formule de mise (stakeMultiplier(0.5) = 1,
-// ni gain ni perte) : en dessous de la moitié de bonnes réponses, on considère la partie
-// perdue.
+// (ratio < 0.5, indépendant de la formule de mise ci-dessus depuis qu'elle est devenue
+// asymétrique) : en dessous de la moitié de bonnes réponses, on considère la partie perdue.
 const NO_STAKE_LOSS_PERCENT = 30;
 // Un solde à ce niveau ou en dessous bloque les parties gratuites (quotidien inclus) : le
 // joueur ne peut plus jouer qu'avec une partie bonus (achetée via dépôt chez l'agent, voir
