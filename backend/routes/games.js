@@ -35,11 +35,11 @@ const SESSION_TTL_MS = 30 * 60 * 1000; // 30 min: a game started but never submi
 
 // Limite de temps visible par partie (juillet 2026) : un compte à rebours s'affiche
 // côté joueur (voir frontend/app.js) et soumet automatiquement les réponses déjà données
-// à l'expiration (les questions restantes comptent comme fausses). 45s pour le sprint de
-// calcul était déjà annoncé par l'API depuis le début mais jamais réellement affiché ni
-// imposé ; 60s pour le quiz est nouveau (5 questions à lire, contre 8 calculs plus rapides
-// à résoudre pour le sprint, d'où un temps par item plus généreux ici).
-const TRIVIA_TIME_LIMIT_SECONDS = 60;
+// à l'expiration (les questions restantes comptent comme fausses, voir STAKE_TIMEOUT_LOSS
+// _PERCENT ci-dessous pour la pénalité de mise associée). Même durée (45s) pour les deux
+// jeux, à la demande explicite — initialement 60s pour le quiz, ramené à 45s pour rester
+// cohérent avec le sprint de calcul.
+const TRIVIA_TIME_LIMIT_SECONDS = 45;
 const PUZZLE_TIME_LIMIT_SECONDS = 45;
 // Marge de tolérance côté serveur entre la fin du compte à rebours et la réception de la
 // soumission automatique (latence réseau, onglet mis en arrière-plan par le navigateur...).
@@ -70,6 +70,14 @@ function stakeMultiplier(correctCount, total) {
   const ratio = total > 0 ? correctCount / total : 0;
   return 0.85 + 0.3 * ratio;
 }
+
+// Pénalité de temps écoulé (juillet 2026) : contrairement à un score simplement mauvais
+// (qui suit la formule continue ±15% ci-dessus), une partie qui expire est traitée comme
+// une partie perdue — 0 point gagné quel que soit ce qui avait déjà été répondu
+// correctement, et une perte fixe de STAKE_TIMEOUT_LOSS_PERCENT % de la mise (au lieu de la
+// formule normale) si une mise était engagée. Cette distinction est volontaire : laisser
+// filer le temps ne doit jamais être une stratégie neutre ou avantageuse.
+const STAKE_TIMEOUT_LOSS_PERCENT = 50;
 
 // Valide une mise optionnelle fournie en query string (chaîne ou undefined/null).
 // Retourne { stake: 0 } si aucune mise n'est demandée, ou { error } si elle est invalide.
@@ -166,8 +174,39 @@ function checkNotExpired(session) {
   return (Date.now() - session.createdAt) <= allowedMs;
 }
 
+// Calcule le score/points/mise d'une soumission — partagé par submitTrivia et
+// submitPuzzle. timedOutFlag vient du client (envoyé uniquement par l'auto-soumission à
+// l'expiration du minuteur, voir frontend/app.js) mais n'est honoré que si le serveur
+// confirme indépendamment que le temps annoncé de la session est bien dépassé : un client
+// qui mentirait pour ÉVITER la pénalité (en omettant le flag après un vrai timeout) reste
+// bloqué par la limite dure de checkNotExpired plus haut ; un flag erroné/prématuré qui
+// arriverait alors que le temps n'est pas réellement écoulé est ignoré, sans pénaliser le
+// joueur à tort.
+function scoreOutcome(session, answers, timedOutFlag, pointsPerCorrect) {
+  let correctCount = 0;
+  session.correctAnswers.forEach((correct, i) => { if (Number(answers[i]) === correct) correctCount++; });
+  const total = session.correctAnswers.length;
+
+  const isTimeout = !!timedOutFlag && (Date.now() - session.createdAt) > session.timeLimitSeconds * 1000;
+  const pointsEarned = isTimeout ? 0 : correctCount * pointsPerCorrect;
+
+  let stakeResult = 0, stakeDelta = 0;
+  if (session.stake > 0) {
+    if (isTimeout) {
+      stakeDelta = -Math.round(session.stake * STAKE_TIMEOUT_LOSS_PERCENT / 100);
+      stakeResult = session.stake + stakeDelta;
+    } else {
+      const multiplier = stakeMultiplier(correctCount, total);
+      stakeResult = Math.round(session.stake * multiplier);
+      stakeDelta = stakeResult - session.stake;
+    }
+  }
+
+  return { correctCount, total, pointsEarned, stakeResult, stakeDelta, isTimeout };
+}
+
 export function submitTrivia(userId, body) {
-  const { sessionToken, answers } = body || {};
+  const { sessionToken, answers, timedOut } = body || {};
   const session = activeSessions.get(sessionToken);
   if (!session || session.userId !== userId || session.gameType !== 'trivia') {
     return { status: 400, data: { error: 'Session de jeu invalide ou expirée' } };
@@ -179,10 +218,9 @@ export function submitTrivia(userId, body) {
   if (!Array.isArray(answers) || answers.length !== session.correctAnswers.length) {
     return { status: 400, data: { error: 'Réponses invalides' } };
   }
-  let correctCount = 0;
-  session.correctAnswers.forEach((correct, i) => { if (Number(answers[i]) === correct) correctCount++; });
-  const total = session.correctAnswers.length;
-  const pointsEarned = correctCount * POINTS_PER_CORRECT_TRIVIA;
+
+  const { correctCount, total, pointsEarned, stakeResult, stakeDelta, isTimeout } =
+    scoreOutcome(session, answers, timedOut, POINTS_PER_CORRECT_TRIVIA);
 
   db.prepare('INSERT INTO game_sessions (user_id, game_type, score, points_earned) VALUES (?, ?, ?, ?)')
     .run(userId, 'trivia', correctCount, pointsEarned);
@@ -192,16 +230,14 @@ export function submitTrivia(userId, body) {
       .run(userId, 'earn_trivia', pointsEarned, `${correctCount}/${total} bonnes réponses`);
   }
 
-  let stakeResult = 0, stakeDelta = 0;
   if (session.stake > 0) {
-    const multiplier = stakeMultiplier(correctCount, total);
-    stakeResult = Math.round(session.stake * multiplier);
-    stakeDelta = stakeResult - session.stake;
     // max(0, ...) : garde-fou pour ne jamais faire passer le solde sous zéro, même en cas
     // de mises concurrentes sur plusieurs sessions dépassant le solde initial validé.
     db.prepare('UPDATE users SET points = max(0, points + ?) WHERE id = ?').run(stakeDelta, userId);
     db.prepare('INSERT INTO transactions (user_id, type, amount, note) VALUES (?, ?, ?, ?)')
-      .run(userId, 'stake_trivia', stakeDelta, `Mise de ${session.stake} pts (${correctCount}/${total}) → ${stakeResult} pts (${stakeDelta >= 0 ? '+' : ''}${stakeDelta})`);
+      .run(userId, 'stake_trivia', stakeDelta, isTimeout
+        ? `Mise de ${session.stake} pts perdue à ${STAKE_TIMEOUT_LOSS_PERCENT}% (temps écoulé) → ${stakeResult} pts (${stakeDelta})`
+        : `Mise de ${session.stake} pts (${correctCount}/${total}) → ${stakeResult} pts (${stakeDelta >= 0 ? '+' : ''}${stakeDelta})`);
   }
 
   if (session.usingBonus) {
@@ -212,7 +248,7 @@ export function submitTrivia(userId, body) {
   return {
     status: 200,
     data: {
-      correctCount, total, pointsEarned,
+      correctCount, total, pointsEarned, timedOut: isTimeout,
       stake: session.stake, stakeResult, stakeDelta,
       newBalance: user.points, bonusPlays: user.bonus_plays
     }
@@ -258,7 +294,7 @@ export function getPuzzle(userId, rawStake) {
 }
 
 export function submitPuzzle(userId, body) {
-  const { sessionToken, answers } = body || {};
+  const { sessionToken, answers, timedOut } = body || {};
   const session = activeSessions.get(sessionToken);
   if (!session || session.userId !== userId || session.gameType !== 'puzzle') {
     return { status: 400, data: { error: 'Session de jeu invalide ou expirée' } };
@@ -270,10 +306,9 @@ export function submitPuzzle(userId, body) {
   if (!Array.isArray(answers) || answers.length !== session.correctAnswers.length) {
     return { status: 400, data: { error: 'Réponses invalides' } };
   }
-  let correctCount = 0;
-  session.correctAnswers.forEach((correct, i) => { if (Number(answers[i]) === correct) correctCount++; });
-  const total = session.correctAnswers.length;
-  const pointsEarned = correctCount * POINTS_PER_CORRECT_PUZZLE;
+
+  const { correctCount, total, pointsEarned, stakeResult, stakeDelta, isTimeout } =
+    scoreOutcome(session, answers, timedOut, POINTS_PER_CORRECT_PUZZLE);
 
   db.prepare('INSERT INTO game_sessions (user_id, game_type, score, points_earned) VALUES (?, ?, ?, ?)')
     .run(userId, 'puzzle', correctCount, pointsEarned);
@@ -283,14 +318,12 @@ export function submitPuzzle(userId, body) {
       .run(userId, 'earn_puzzle', pointsEarned, `${correctCount}/${total} calculs corrects`);
   }
 
-  let stakeResult = 0, stakeDelta = 0;
   if (session.stake > 0) {
-    const multiplier = stakeMultiplier(correctCount, total);
-    stakeResult = Math.round(session.stake * multiplier);
-    stakeDelta = stakeResult - session.stake;
     db.prepare('UPDATE users SET points = max(0, points + ?) WHERE id = ?').run(stakeDelta, userId);
     db.prepare('INSERT INTO transactions (user_id, type, amount, note) VALUES (?, ?, ?, ?)')
-      .run(userId, 'stake_puzzle', stakeDelta, `Mise de ${session.stake} pts (${correctCount}/${total}) → ${stakeResult} pts (${stakeDelta >= 0 ? '+' : ''}${stakeDelta})`);
+      .run(userId, 'stake_puzzle', stakeDelta, isTimeout
+        ? `Mise de ${session.stake} pts perdue à ${STAKE_TIMEOUT_LOSS_PERCENT}% (temps écoulé) → ${stakeResult} pts (${stakeDelta})`
+        : `Mise de ${session.stake} pts (${correctCount}/${total}) → ${stakeResult} pts (${stakeDelta >= 0 ? '+' : ''}${stakeDelta})`);
   }
 
   if (session.usingBonus) {
@@ -301,7 +334,7 @@ export function submitPuzzle(userId, body) {
   return {
     status: 200,
     data: {
-      correctCount, total, pointsEarned,
+      correctCount, total, pointsEarned, timedOut: isTimeout,
       stake: session.stake, stakeResult, stakeDelta,
       newBalance: user.points, bonusPlays: user.bonus_plays
     }

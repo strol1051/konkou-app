@@ -715,7 +715,7 @@ function renderHome() {
       <p>3. Cumulez et demandez un retrait en espèces chez notre agent.</p>
       <p>4. Plus de parties gratuites aujourd'hui ? Déposez chez l'agent pour des parties bonus (onglet Portefeuille) — cet argent achète des parties, il n'est pas retirable.</p>
       <p>5. Avant chaque partie, vous pouvez miser entre 100 et 2500 de vos points : bon score, la mise augmente jusqu'à 15% ; mauvais score, elle diminue jusqu'à 15%. Optionnel — vous pouvez toujours jouer sans miser.</p>
-      <p>6. Chaque partie est chronométrée (60 secondes pour le quiz, 45 pour le sprint de calcul) : le temps s'affiche pendant que vous jouez, et vos réponses sont soumises automatiquement à zéro — les questions sans réponse comptent comme fausses.</p>
+      <p>6. Chaque partie est chronométrée (45 secondes) : le temps s'affiche pendant que vous jouez. Si le temps s'écoule avant la fin, la partie est perdue (0 point) et une mise éventuelle perd 50% — répondez avant la fin du compte à rebours !</p>
     </div>
   `;
 }
@@ -743,7 +743,7 @@ function renderStakePrompt() {
     ${state.error ? `<div class="error-banner">${escapeHtml(state.error)}</div>` : ''}
     <div class="card">
       <h2>${pendingGameType === 'trivia' ? '🧠' : '🔢'} ${label}</h2>
-      <p>Vous pouvez miser entre ${STAKE_MIN} et ${STAKE_MAX} points de votre solde (${balance} pts disponibles) avant de jouer. Votre mise varie de ±15% selon votre score : un score parfait la fait gagner 15%, un score nul lui en fait perdre 15%, un score à mi-chemin la laisse inchangée. Les points gagnés normalement par bonne réponse restent les mêmes, avec ou sans mise.</p>
+      <p>Vous pouvez miser entre ${STAKE_MIN} et ${STAKE_MAX} points de votre solde (${balance} pts disponibles) avant de jouer. Votre mise varie de ±15% selon votre score : un score parfait la fait gagner 15%, un score nul lui en fait perdre 15%, un score à mi-chemin la laisse inchangée. Les points gagnés normalement par bonne réponse restent les mêmes, avec ou sans mise. ⚠️ Si le temps s'écoule (45 secondes par partie), la partie est perdue et votre mise perd 50% quel que soit votre score en cours — cette règle remplace la formule ci-dessus dans ce cas.</p>
       ${maxStake < STAKE_MIN ? `
         <p class="error-banner">Solde insuffisant (min. ${STAKE_MIN} pts) pour miser — vous pouvez quand même jouer sans mise.</p>
         <button class="primary" id="play-no-stake">Jouer sans mise</button>
@@ -823,6 +823,32 @@ function renderGameScreen(type) {
     const bonusAfterNote = bonusAfter !== null && bonusAfter > 0
       ? `<p style="font-size:18px; font-weight:800; color:var(--text);">🎟️ Parties bonus disponibles : <strong style="color:var(--green);">${bonusAfter}</strong></p>`
       : '';
+    // Temps écoulé (juillet 2026) : traité comme une partie perdue plutôt qu'un résultat
+    // normal — 0 point quel que soit ce qui avait déjà été répondu, et une perte fixe de
+    // 50% de la mise éventuelle (au lieu de la formule ±15% habituelle) ; voir scoreOutcome()
+    // dans backend/routes/games.js et "Limite de temps par partie" dans README.md.
+    if (r.timedOut) {
+      return `
+        <div class="card" style="border:2px solid var(--red);">
+          <h2>⏰ Temps écoulé — partie perdue</h2>
+          <p>Vous avez répondu correctement à <strong>${r.correctCount}/${r.total}</strong>, mais le temps s'est écoulé avant la fin : la partie compte comme perdue, <strong style="color:var(--red)">0 point gagné</strong>.</p>
+          ${staked ? `
+            <p>Mise : <strong>${r.stake} pts</strong> → <strong>${r.stakeResult} pts</strong>
+              (<strong style="color:var(--red)">${r.stakeDelta} pts, -50% pour temps écoulé</strong>)</p>
+          ` : ''}
+          <p>Nouveau solde : <strong>${r.newBalance} pts</strong></p>
+          ${remainingAfterNote}
+          ${bonusAfterNote}
+        </div>
+        <div class="card">
+          <h2>🎮 Jouer une nouvelle partie</h2>
+          <div class="grid-2">
+            <button class="tile" data-start="trivia"><span class="emoji">🧠</span>Quiz culture générale</button>
+            <button class="tile" data-start="puzzle"><span class="emoji">🔢</span>Sprint de calcul</button>
+          </div>
+        </div>
+      `;
+    }
     return `
       <div class="card">
         <h2>${type === 'trivia' ? '🧠 Résultat du quiz' : '🔢 Résultat du sprint'}</h2>
@@ -857,8 +883,10 @@ function renderGameScreen(type) {
     : '';
   // Placeholder recalculé immédiatement par startGameTimerTick() (voir render()) — évite
   // d'afficher un "--:--" vide pendant la fraction de seconde avant le premier tick.
+  // Bien plus grand/visible (juillet 2026) qu'à sa première version (16px, discret) — le
+  // joueur doit voir le temps restant sans effort, en jeu comme sur écran mobile.
   const timerNote = g.deadlineAt
-    ? `<p id="game-timer" style="text-align:center; font-size:16px; font-weight:800; color:var(--text); margin:0 0 8px;">⏱️ --:--</p>`
+    ? `<p id="game-timer" style="text-align:center; font-size:44px; font-weight:900; letter-spacing:1px; color:var(--text); margin:0 0 10px; padding:10px 0; border-radius:16px; background:rgba(0,0,0,0.28);">⏱️ --:--</p>`
     : '';
 
   if (type === 'trivia') {
@@ -942,7 +970,9 @@ async function autoSubmitOnTimeout() {
   const g = state.game;
   if (!g || g.result) return;
   while (g.answers.length < g.items.length) g.answers.push(-1);
-  await submitGame(g);
+  // timedOut: true déclenche la pénalité côté serveur (partie perdue, 50% de la mise
+  // perdue au lieu de la formule normale) — voir scoreOutcome() dans backend/routes/games.js.
+  await submitGame(g, { timedOut: true });
 }
 
 function bindGameEvents() {
@@ -991,12 +1021,12 @@ async function answerCurrent(value) {
 // moment où le joueur soumet sa dernière réponse déclenche deux requêtes concurrentes pour
 // la même session (le serveur, lui, refuserait la seconde de toute façon, mais la première
 // réponse réussie ne doit jamais être écrasée par l'erreur de la seconde).
-async function submitGame(g) {
+async function submitGame(g, extraBody = {}) {
   if (!g || g.result || g.submitting) return;
   g.submitting = true;
   try {
     const path = g.type === 'trivia' ? '/games/trivia/submit' : '/games/puzzle/submit';
-    const result = await api(path, { method: 'POST', body: { sessionToken: g.sessionToken, answers: g.answers } });
+    const result = await api(path, { method: 'POST', body: { sessionToken: g.sessionToken, answers: g.answers, ...extraBody } });
     g.result = result;
     if (state.user) {
       state.user.points = result.newBalance;
