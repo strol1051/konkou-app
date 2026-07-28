@@ -803,7 +803,7 @@ function renderHome() {
       <p>3. Cumulez et demandez un retrait en espèces chez notre agent.</p>
       <p>4. Plus de parties gratuites aujourd'hui ? Déposez chez l'agent pour des parties bonus (onglet Portefeuille) — cet argent achète des parties, il n'est pas retirable.</p>
       <p>5. Avant chaque partie, vous pouvez miser entre 100 et 2500 de vos points : score quasi parfait, la mise augmente jusqu'à 10% ; score faible, elle peut diminuer jusqu'à 75%. Optionnel — vous pouvez toujours jouer sans miser.</p>
-      <p>6. Chaque partie est chronométrée (30 secondes) : le temps s'affiche pendant que vous jouez. Si le temps s'écoule avant la fin, la partie est perdue (0 point) et une mise éventuelle perd 50% — répondez avant la fin du compte à rebours !</p>
+      <p>6. Chaque partie est chronométrée (25 secondes) : le temps s'affiche pendant que vous jouez. Si le temps s'écoule avant la fin, la partie est perdue (0 point) et une mise éventuelle perd 50% — répondez avant la fin du compte à rebours !</p>
     </div>
   `;
 }
@@ -831,7 +831,7 @@ function renderStakePrompt() {
     ${state.error ? `<div class="error-banner">${escapeHtml(state.error)}</div>` : ''}
     <div class="card">
       <h2>${pendingGameType === 'trivia' ? '🧠' : '🔢'} ${label}</h2>
-      <p>Vous pouvez miser entre ${STAKE_MIN} et ${STAKE_MAX} points de votre solde (${balance} pts disponibles) avant de jouer. Votre mise varie selon votre score : un score parfait la fait gagner 10%, un score nul lui en fait perdre 75% — il faut environ 9 bonnes réponses sur 10 pour au moins récupérer sa mise. Les points gagnés normalement par bonne réponse restent les mêmes, avec ou sans mise. ⚠️ Si le temps s'écoule (30 secondes par partie), la partie est perdue et votre mise perd 50% quel que soit votre score en cours — cette règle remplace la formule ci-dessus dans ce cas.</p>
+      <p>Vous pouvez miser entre ${STAKE_MIN} et ${STAKE_MAX} points de votre solde (${balance} pts disponibles) avant de jouer. Votre mise varie selon votre score : un score parfait la fait gagner 10%, un score nul lui en fait perdre 75% — il faut environ 9 bonnes réponses sur 10 pour au moins récupérer sa mise. Les points gagnés normalement par bonne réponse restent les mêmes, avec ou sans mise. ⚠️ Si le temps s'écoule (25 secondes par partie), la partie est perdue et votre mise perd 50% quel que soit votre score en cours — cette règle remplace la formule ci-dessus dans ce cas.</p>
       ${maxStake < STAKE_MIN ? `
         <p class="error-banner">Solde insuffisant (min. ${STAKE_MIN} pts) pour miser — vous pouvez quand même jouer sans mise.</p>
         <button class="primary" id="play-no-stake">Jouer sans mise</button>

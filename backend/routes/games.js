@@ -38,9 +38,10 @@ const SESSION_TTL_MS = 30 * 60 * 1000; // 30 min: a game started but never submi
 // à l'expiration (les questions restantes comptent comme fausses, voir STAKE_TIMEOUT_LOSS
 // _PERCENT ci-dessous pour la pénalité de mise associée). Même durée pour les deux jeux,
 // à la demande explicite — initialement 60s pour le quiz, ramenée à 45s pour rester
-// cohérente avec le sprint de calcul, puis resserrée une seconde fois à 30s.
-const TRIVIA_TIME_LIMIT_SECONDS = 30;
-const PUZZLE_TIME_LIMIT_SECONDS = 30;
+// cohérente avec le sprint de calcul, resserrée une seconde fois à 30s, puis une
+// troisième fois à 25s.
+const TRIVIA_TIME_LIMIT_SECONDS = 25;
+const PUZZLE_TIME_LIMIT_SECONDS = 25;
 // Marge de tolérance côté serveur entre la fin du compte à rebours et la réception de la
 // soumission automatique (latence réseau, onglet mis en arrière-plan par le navigateur...).
 // Au-delà de limite + marge depuis le début de la partie, la soumission est refusée — ça
