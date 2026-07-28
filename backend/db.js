@@ -191,6 +191,24 @@ CREATE TABLE IF NOT EXISTS deleted_phones (
   phone TEXT NOT NULL,
   deleted_at TEXT DEFAULT (datetime('now'))
 );
+
+-- Défi du jour (juillet 2026) : un objectif quotidien basé sur la PERFORMANCE (voir
+-- DAILY_CHALLENGE_PERCENT dans routes/games.js), pas sur la simple présence — jouer une
+-- partie ne suffit pas, il faut un score suffisant. La contrainte UNIQUE(user_id,
+-- claim_date) garantit qu'une seule ligne existe par joueur et par jour civil, donc que
+-- tryCreditDailyChallenge() (routes/games.js) ne peut jamais créditer la récompense deux
+-- fois le même jour, même si le joueur enchaîne plusieurs parties qualifiantes.
+CREATE TABLE IF NOT EXISTS daily_challenge_claims (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id INTEGER NOT NULL,
+  claim_date TEXT NOT NULL,
+  game_type TEXT NOT NULL,
+  score INTEGER NOT NULL,
+  total INTEGER NOT NULL,
+  reward_points INTEGER NOT NULL,
+  created_at TEXT DEFAULT (datetime('now')),
+  UNIQUE(user_id, claim_date)
+);
 `);
 
 // Lightweight migrations for databases created before these columns existed.

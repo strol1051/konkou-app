@@ -74,6 +74,54 @@ function stakeMultiplier(correctCount, total) {
   return 0.25 + 0.85 * ratio;
 }
 
+// Défi du jour (juillet 2026) : obtenir au moins DAILY_CHALLENGE_PERCENT% de bonnes
+// réponses dans UNE partie (quiz ou sprint, peu importe lequel) rapporte
+// DAILY_CHALLENGE_REWARD_POINTS points, une seule fois par jour civil — voir la table
+// daily_challenge_claims dans db.js pour la contrainte qui empêche un double crédit.
+// Volontairement basé sur la performance plutôt que la présence, cohérent avec le reste
+// de l'app (mise, classement) qui récompense le score plutôt que juste "avoir joué".
+const DAILY_CHALLENGE_PERCENT = 80;
+const DAILY_CHALLENGE_REWARD_POINTS = 50;
+
+// Retourne { rewardPoints } si CE résultat vient de faire gagner le défi du jour (et le
+// crédite immédiatement), ou null sinon — score sous le seuil, ou défi déjà relevé
+// aujourd'hui via une autre partie. Les appelants (submitTrivia/submitPuzzle) ne
+// l'invoquent jamais pour une partie expirée (isTimeout) : laisser filer le temps ne doit
+// jamais qualifier, même avec de bonnes réponses déjà données.
+function tryCreditDailyChallenge(userId, gameType, correctCount, total) {
+  if (total <= 0 || (correctCount / total) * 100 < DAILY_CHALLENGE_PERCENT) return null;
+
+  try {
+    db.prepare(
+      `INSERT INTO daily_challenge_claims (user_id, claim_date, game_type, score, total, reward_points)
+       VALUES (?, date('now'), ?, ?, ?, ?)`
+    ).run(userId, gameType, correctCount, total, DAILY_CHALLENGE_REWARD_POINTS);
+  } catch {
+    // Contrainte UNIQUE(user_id, claim_date) déjà utilisée aujourd'hui.
+    return null;
+  }
+
+  db.prepare('UPDATE users SET points = points + ? WHERE id = ?').run(DAILY_CHALLENGE_REWARD_POINTS, userId);
+  db.prepare('INSERT INTO transactions (user_id, type, amount, note) VALUES (?, ?, ?, ?)')
+    .run(userId, 'daily_challenge_reward', DAILY_CHALLENGE_REWARD_POINTS,
+      `Défi du jour relevé (${correctCount}/${total} à ${gameType === 'trivia' ? 'Quiz' : 'Sprint'}) — +${DAILY_CHALLENGE_REWARD_POINTS} pts`);
+
+  return { rewardPoints: DAILY_CHALLENGE_REWARD_POINTS };
+}
+
+// Consulté par routes/profile.js pour afficher la carte "Défi du jour" sur l'accueil,
+// avant même que le joueur ait lancé une partie aujourd'hui.
+export function getDailyChallengeStatus(userId) {
+  const claimed = db.prepare(
+    `SELECT 1 FROM daily_challenge_claims WHERE user_id = ? AND claim_date = date('now') LIMIT 1`
+  ).get(userId);
+  return {
+    thresholdPercent: DAILY_CHALLENGE_PERCENT,
+    rewardPoints: DAILY_CHALLENGE_REWARD_POINTS,
+    completedToday: !!claimed
+  };
+}
+
 // Pénalité sur partie SANS mise (juillet 2026) : jouer gratuitement n'est plus totalement
 // sans risque pour le solde — un score perdant (moins de la moitié de bonnes réponses, ou
 // un timeout) coûte 30% du solde de points du joueur, en plus de ne rapporter aucun/peu de
@@ -289,6 +337,7 @@ export function submitTrivia(userId, body) {
   }
 
   const noStakePenalty = applyNoStakePenalty(userId, lostWithoutStake, 'de quiz');
+  const dailyChallenge = isTimeout ? null : tryCreditDailyChallenge(userId, 'trivia', correctCount, total);
 
   if (session.usingBonus) {
     db.prepare('UPDATE users SET bonus_plays = bonus_plays - 1 WHERE id = ? AND bonus_plays > 0').run(userId);
@@ -299,7 +348,7 @@ export function submitTrivia(userId, body) {
     status: 200,
     data: {
       correctCount, total, pointsEarned, timedOut: isTimeout,
-      stake: session.stake, stakeResult, stakeDelta, noStakePenalty,
+      stake: session.stake, stakeResult, stakeDelta, noStakePenalty, dailyChallenge,
       newBalance: user.points, bonusPlays: user.bonus_plays
     }
   };
@@ -377,6 +426,7 @@ export function submitPuzzle(userId, body) {
   }
 
   const noStakePenalty = applyNoStakePenalty(userId, lostWithoutStake, 'de calcul');
+  const dailyChallenge = isTimeout ? null : tryCreditDailyChallenge(userId, 'puzzle', correctCount, total);
 
   if (session.usingBonus) {
     db.prepare('UPDATE users SET bonus_plays = bonus_plays - 1 WHERE id = ? AND bonus_plays > 0').run(userId);
@@ -387,7 +437,7 @@ export function submitPuzzle(userId, body) {
     status: 200,
     data: {
       correctCount, total, pointsEarned, timedOut: isTimeout,
-      stake: session.stake, stakeResult, stakeDelta, noStakePenalty,
+      stake: session.stake, stakeResult, stakeDelta, noStakePenalty, dailyChallenge,
       newBalance: user.points, bonusPlays: user.bonus_plays
     }
   };

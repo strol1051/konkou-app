@@ -228,15 +228,27 @@ function applyTopbarBgImage(url) {
   }
 }
 
+// Retenu à part (comme logoUrl plus haut) pour que renderHome() puisse afficher une
+// bannière "thème actif" (voir "Mise en avant du thème saisonnier", juillet 2026) sans
+// avoir à refaire un appel réseau dédié — la valeur est déjà récupérée ici de toute façon.
+let activeThemeKey = 'default';
+
 async function applyThemeFromServer() {
   try {
     const res = await fetch('/api/theme');
     const data = await res.json();
+    activeThemeKey = data.theme || 'default';
     applyThemeVars(data.theme, data.bgColor);
     applyThemeParticles(data.theme);
     applyBgImage(data.bgImage);
     applyTopbarBgImage(data.topbarBgImage);
     applyLogo(data.logo);
+    // state/render() sont définis plus bas dans le fichier, mais ce point du code ne
+    // s'exécute qu'après le "await" ci-dessus — donc après la fin de l'exécution
+    // synchrone du module, qui a le temps de tout définir avant la résolution de la
+    // requête réseau. Ne redessine que si l'accueil est déjà affiché, pour ne jamais
+    // interrompre une saisie de formulaire en cours ailleurs.
+    if (state.view === 'home') render();
   } catch {
     // Hors ligne ou erreur réseau : on garde les couleurs par défaut de styles.css.
   }
@@ -396,6 +408,11 @@ async function refreshProfile() {
     const p = await api('/profile');
     state.user = { ...state.user, ...p, referralCode: p.referralCode };
     localStorage.setItem('konkou_user', JSON.stringify(state.user));
+    // Sans ce render(), la carte "Défi du jour" de l'accueil (voir renderHome) resterait
+    // sur les données de connexion (qui n'incluent pas dailyChallenge) jusqu'au prochain
+    // changement d'état déclenché ailleurs — ici on la met à jour dès que la réponse
+    // arrive, sans attendre une navigation.
+    render();
   } catch (e) {
     if (e.status === 401) logout();
   }
@@ -784,17 +801,46 @@ function renderView() {
 
 function renderHome() {
   const bonusPlays = state.user?.bonusPlays ?? 0;
+  const dc = state.user?.dailyChallenge;
+  const theme = THEMES[activeThemeKey] || THEMES.default;
   return `
     ${state.success ? `<div class="success-banner">${state.success}</div>` : ''}
     ${state.error ? `<div class="error-banner">${state.error}</div>` : ''}
+    ${activeThemeKey !== 'default' ? `
+    <div class="card glow-card">
+      <p style="font-size:13px; margin:0; display:flex; align-items:center; gap:10px;">
+        <span style="font-size:24px; line-height:1;">${theme.particle || '✨'}</span>
+        <span>Le thème <strong>${escapeHtml(theme.label)}</strong> est actif en ce moment — décor et questions spéciales tant que ça dure !</span>
+      </p>
+    </div>
+    ` : ''}
     <div class="card">
       <h2>Bonjour ${escapeHtml(state.user?.name ?? '')} 👋</h2>
       <p>Jouez chaque jour pour gagner des points, grimper au classement et les retirer en espèces chez notre agent.</p>
       ${bonusPlays > 0 ? `<p style="font-size:18px; font-weight:800; color:var(--game-contrast);">🎟️ <strong>${bonusPlays}</strong> partie(s) bonus disponible(s) (au-delà de la limite gratuite du jour).</p>` : ''}
     </div>
-    <div class="grid-2">
-      <button class="tile" data-start="trivia"><span class="emoji">🧠</span>Quiz culture générale</button>
-      <button class="tile" data-start="puzzle"><span class="emoji">🔢</span>Sprint de calcul</button>
+    ${dc ? `
+    <div class="card glow-card ${dc.completedToday ? 'challenge-done' : ''}">
+      <h2>🎯 Défi du jour</h2>
+      <p style="font-size:13px;">Obtenez au moins <strong>${dc.thresholdPercent}%</strong> de bonnes réponses dans une seule partie (quiz ou sprint) aujourd'hui.</p>
+      ${dc.completedToday
+        ? `<p style="font-size:14px; font-weight:700; color:var(--green); margin:0;">✅ Relevé aujourd'hui — +${dc.rewardPoints} pts crédités</p>`
+        : `<p style="font-size:13px; color:var(--muted); margin:0;">Pas encore relevé — récompense : <strong>+${dc.rewardPoints} pts</strong></p>`}
+    </div>
+    ` : ''}
+    <div class="game-hub">
+      <button class="game-panel" data-start="trivia">
+        <div class="icon-badge">🧠</div>
+        <h3>Quiz culture générale</h3>
+        <p>5 questions · 25 secondes</p>
+        <div class="panel-cta">Jouer <span aria-hidden="true">→</span></div>
+      </button>
+      <button class="game-panel" data-start="puzzle">
+        <div class="icon-badge">🔢</div>
+        <h3>Sprint de calcul</h3>
+        <p>8 calculs · 25 secondes</p>
+        <div class="panel-cta">Jouer <span aria-hidden="true">→</span></div>
+      </button>
     </div>
     <div class="card">
       <h2>Comment ça marche</h2>
@@ -804,6 +850,7 @@ function renderHome() {
       <p>4. Plus de parties gratuites aujourd'hui ? Déposez chez l'agent pour des parties bonus (onglet Portefeuille) — cet argent achète des parties, il n'est pas retirable.</p>
       <p>5. Avant chaque partie, vous pouvez miser entre 100 et 2500 de vos points : score quasi parfait, la mise augmente jusqu'à 10% ; score faible, elle peut diminuer jusqu'à 75%. Optionnel — vous pouvez toujours jouer sans miser.</p>
       <p>6. Chaque partie est chronométrée (25 secondes) : le temps s'affiche pendant que vous jouez. Si le temps s'écoule avant la fin, la partie est perdue (0 point) et une mise éventuelle perd 50% — répondez avant la fin du compte à rebours !</p>
+      <p>7. Défi du jour : obtenez au moins 80% de bonnes réponses dans une partie pour gagner un bonus de points, une fois par jour.</p>
     </div>
   `;
 }
@@ -965,6 +1012,9 @@ function renderGameScreen(type) {
         ` : ''}
         ${!staked && r.noStakePenalty > 0 ? `
           <p>Partie perdue sans mise : <strong style="color:var(--red)">-${r.noStakePenalty} pts (-30% du solde)</strong></p>
+        ` : ''}
+        ${r.dailyChallenge ? `
+          <p style="color:var(--green); font-weight:700;">🎯 Défi du jour relevé — +${r.dailyChallenge.rewardPoints} pts !</p>
         ` : ''}
         <p>Nouveau solde : <strong>${r.newBalance} pts</strong></p>
         ${remainingAfterNote}

@@ -17,6 +17,14 @@
      n'importe quelle image. */
   --topbar-bg-image: none;
   --topbar-overlay: none;
+  /* Accent "futuriste" (juillet 2026, voir .game-panel/.glow-card ci-dessous) — un cyan
+     électrique volontairement distinct de --blue/--red pour ne pas se confondre avec les
+     couleurs de marque, mais assez proche du --blue existant pour rester cohérent avec un
+     thème saisonnier qui changerait --blue (voir applyThemeVars() dans app.js/admin.js :
+     cette variable n'est PAS réinitialisée par changement de thème, elle reste fixe pour
+     que l'habillage "futuriste" ne clignote pas d'une couleur à l'autre à chaque thème).
+  */
+  --accent-glow: #26d6ff;
 }
 
 * { box-sizing: border-box; }
@@ -131,6 +139,103 @@ body {
   font-size: 28px;
   display: block;
   margin-bottom: 8px;
+}
+
+/* ---- Vitrine "futuriste" de l'accueil (juillet 2026) ----
+   .game-hub/.game-panel remplacent les .tile plates pour les deux jeux sur l'accueil —
+   chaque jeu devient une carte à part entière avec son propre badge lumineux, plutôt
+   qu'un simple bouton avec une emoji. .glow-card habille la bannière de thème saisonnier
+   et la carte "Défi du jour" avec le même langage visuel (bordure/lueur cyan), pour que
+   les trois éléments lisent comme un seul ensemble cohérent plutôt que des ajouts
+   disparates. Volontairement en CSS pur (dégradés, box-shadow, une seule keyframe) — pas
+   d'image ni de police externe, cohérent avec le choix zéro-dépendance de l'app. */
+.game-hub {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+.game-panel {
+  position: relative;
+  background: linear-gradient(160deg, var(--card-2), var(--card));
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: var(--radius);
+  padding: 18px 16px;
+  text-align: left;
+  cursor: pointer;
+  overflow: hidden;
+  color: var(--text);
+  box-shadow: 0 0 0 1px rgba(38, 214, 255, 0.1), 0 8px 20px rgba(0, 0, 0, 0.3);
+  transition: transform 0.12s ease;
+}
+
+.game-panel:active {
+  transform: scale(0.97);
+}
+
+/* Halo décoratif dans le coin — purement cosmétique, ne capte jamais le clic
+   (pointer-events: none), positionné en dehors du flux (inset négatif) pour ne jamais
+   pousser le contenu texte. */
+.game-panel::before {
+  content: '';
+  position: absolute;
+  inset: -30% -30% auto auto;
+  width: 120px;
+  height: 120px;
+  background: radial-gradient(circle, rgba(38, 214, 255, 0.22), transparent 70%);
+  pointer-events: none;
+}
+
+.game-panel .icon-badge {
+  width: 44px;
+  height: 44px;
+  border-radius: 13px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 21px;
+  background: linear-gradient(135deg, var(--blue), var(--blue-2));
+  box-shadow: 0 0 14px rgba(38, 214, 255, 0.45);
+  margin-bottom: 10px;
+  position: relative;
+}
+
+.game-panel h3 {
+  font-size: 15px;
+  font-weight: 700;
+  margin: 0 0 4px;
+}
+
+.game-panel p {
+  font-size: 12px;
+  color: var(--muted);
+  margin: 0;
+}
+
+.game-panel .panel-cta {
+  margin-top: 12px;
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--accent-glow);
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+/* Carte à bordure/lueur cyan — bannière de thème saisonnier et carte "Défi du jour"
+   (voir renderHome() dans app.js). */
+.glow-card {
+  border-left: 3px solid var(--accent-glow);
+  box-shadow: 0 0 16px rgba(38, 214, 255, 0.16);
+}
+
+/* Défi du jour déjà relevé aujourd'hui — bascule la lueur du cyan vers le vert de succès
+   (déjà utilisé ailleurs pour les montants positifs, voir .tx-amount.pos), pour que l'état
+   "gagné" soit reconnaissable d'un coup d'œil sans avoir à lire le texte. */
+.glow-card.challenge-done {
+  border-left-color: var(--green);
+  box-shadow: 0 0 16px rgba(34, 197, 94, 0.22);
 }
 
 button.primary, a.primary {

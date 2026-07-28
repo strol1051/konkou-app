@@ -1,4 +1,5 @@
 import db from '../db.js';
+import { getDailyChallengeStatus } from './games.js';
 
 export function getProfile(userId) {
   const user = db.prepare('SELECT id, phone, name, points, referral_code, bonus_plays, created_at FROM users WHERE id = ?').get(userId);
@@ -18,7 +19,11 @@ export function getProfile(userId) {
       referralsCount,
       gamesPlayed,
       bonusPlays: user.bonus_plays,
-      memberSince: user.created_at
+      memberSince: user.created_at,
+      // Affiché sur l'accueil (carte "Défi du jour", voir frontend/app.js) — voir
+      // routes/games.js pour la logique de crédit (tryCreditDailyChallenge, appelée à
+      // chaque soumission de partie).
+      dailyChallenge: getDailyChallengeStatus(user.id)
     }
   };
 }
