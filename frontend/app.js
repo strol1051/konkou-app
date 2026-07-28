@@ -1398,7 +1398,7 @@ function agentSelectHtml(agents, selectId) {
   return `
     <select name="agentCode" id="${selectId}" required>
       <option value="">Choisir un agent</option>
-      ${agents.map(a => `<option value="${escapeHtml(a.agentCode)}" data-city="${escapeHtml(a.city || '')}" data-address="${escapeHtml(a.address || '')}">${escapeHtml(a.agentCode)} — ${escapeHtml(a.firstName)} ${escapeHtml(a.lastName)} (N°${escapeHtml(a.agentNumber)})</option>`).join('')}
+      ${agents.map(a => `<option value="${escapeHtml(a.agentCode)}" data-city="${escapeHtml(a.city || '')}" data-address="${escapeHtml(a.address || '')}">${escapeHtml(a.fullCode || a.agentCode)} — ${escapeHtml(a.firstName)} ${escapeHtml(a.lastName)} — ${escapeHtml([a.city, a.address].filter(Boolean).join(', '))}</option>`).join('')}
     </select>
     <div id="${selectId}-info" class="card" style="display:none; padding:12px; margin-top:-2px;"></div>
   `;
@@ -1900,8 +1900,8 @@ function agentPendingHtml(agent) {
     ${state.success ? `<div class="success-banner">${escapeHtml(state.success)}</div>` : ''}
     <div class="card">
       <h2>⏳ Candidature en attente</h2>
-      <p>Agent N° <strong>${escapeHtml(agent.agentNumber)}</strong> — code :</p>
-      <p style="font-size:28px; font-weight:800; letter-spacing:3px; text-align:center;">${escapeHtml(agent.agentCode)}</p>
+      <p>Code Agent :</p>
+      <p style="font-size:28px; font-weight:800; letter-spacing:3px; text-align:center;">${escapeHtml(agent.fullCode || agent.agentCode)}</p>
       <p>Déposez <strong>${agent.capitalHtg} HTG</strong> à notre bureau pour activer votre compte agent.</p>
       <p style="font-size:13px;">Nous vérifions votre pièce d'identité et confirmons la réception du dépôt avant l'activation.</p>
     </div>
@@ -1915,7 +1915,7 @@ function agentRejectedHtml(agent) {
     ${state.success ? `<div class="success-banner">${escapeHtml(state.success)}</div>` : ''}
     <div class="card">
       <h2>❌ Candidature rejetée</h2>
-      <p>Votre candidature agent (code ${escapeHtml(agent.agentCode)}) a été rejetée.</p>
+      <p>Votre candidature agent (code ${escapeHtml(agent.fullCode || agent.agentCode)}) a été rejetée.</p>
       <button class="secondary" id="agent-reapply">Soumettre une nouvelle candidature</button>
     </div>
     ${agentDeleteAccountBlock(agent)}
@@ -1930,8 +1930,7 @@ function agentDashboardHtml(dash, commission) {
     ${state.success ? `<div class="success-banner">${escapeHtml(state.success)}</div>` : ''}
     <div class="card">
       <h2>🧑‍💼 ${escapeHtml(dash.firstName)} ${escapeHtml(dash.lastName)}</h2>
-      <div class="stat-row"><span>Numéro agent</span><span><strong>${escapeHtml(dash.agentNumber)}</strong></span></div>
-      <div class="stat-row"><span>Code agent</span><span>${escapeHtml(dash.agentCode)}</span></div>
+      <div class="stat-row"><span>Code Agent</span><span><strong>${escapeHtml(dash.fullCode || dash.agentCode)}</strong></span></div>
       ${(dash.city || dash.address) ? `<div class="stat-row"><span>Point de service</span><span>${[dash.city, dash.address].filter(Boolean).map(escapeHtml).join(' — ')}</span></div>` : ''}
       <div class="stat-row"><span>Balance (crédit à revendre)</span><span><strong>${dash.creditBalance} HTG</strong></span></div>
     </div>

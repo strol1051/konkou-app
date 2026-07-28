@@ -531,6 +531,15 @@ const server = http.createServer(async (req, res) => {
       return sendJson(res, status, data);
     }
 
+    if (pathname === '/api/admin/agents/report' && method === 'GET') {
+      if (!requireAdmin(req, res)) return;
+      const { status, data } = adminRoutes.getAgentsGlobalReport({
+        from: url.searchParams.get('from'),
+        to: url.searchParams.get('to')
+      });
+      return sendJson(res, status, data);
+    }
+
     if (pathname === '/api/admin/vip' && method === 'GET') {
       if (!requireAdmin(req, res)) return;
       const { status, data } = adminRoutes.listVipPurchases(url.searchParams.get('status'));

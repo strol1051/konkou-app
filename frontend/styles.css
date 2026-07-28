@@ -598,3 +598,22 @@ textarea {
   0% { transform: translateY(0) rotate(0deg); }
   100% { transform: translateY(115vh) rotate(360deg); }
 }
+
+/* Impression du "Rapport global" agents (Admin, voir renderAgentsReport() dans admin.js).
+   Technique standard : on cache tout le document sauf #agents-report-printable et son
+   contenu, qu'on replace en haut de la page — évite de dépendre de la structure DOM
+   exacte de l'admin (topbar, tuiles de section, boutons...) qui ne doit jamais
+   apparaître sur la feuille imprimée. .no-print masque en plus les contrôles
+   (sélecteurs de date, bouton Imprimer lui-même) qui n'ont aucun sens sur papier. */
+@media print {
+  body * { visibility: hidden; }
+  #agents-report-printable, #agents-report-printable * { visibility: visible; }
+  #agents-report-printable {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    color: #000;
+  }
+  .no-print { display: none !important; }
+}

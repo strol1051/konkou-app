@@ -244,6 +244,10 @@ const state = {
   verifications: [],
   deposits: [],
   agents: [],
+  agentsView: 'list', // list | report — sous-onglet de la section "agents" (voir renderAgentsSection)
+  agentsReport: null, // résultat de /admin/agents/report (Rapport global, tous agents)
+  reportFrom: '', // borne basse (YYYY-MM-DD) du Rapport global ('' = depuis le début)
+  reportTo: '', // borne haute (YYYY-MM-DD) du Rapport global ('' = jusqu'à aujourd'hui)
   refills: [],
   vip: [],
   revenue: null,
@@ -452,20 +456,82 @@ function renderVipSection() {
   `;
 }
 
+// ---------- Rapport global Agents (commissions à verser par période) ----------
+// Vue imprimable listant tous les agents du système avec leurs commissions générées et
+// retraits effectués sur la période choisie (from/to), pour faire les suivis de paiement
+// de commission. #agents-report-printable est le seul contenu conservé au moment de
+// l'impression (voir la règle @media print dans styles.css).
+function renderAgentsReport() {
+  const today = new Date().toISOString().slice(0, 10);
+  const rep = state.agentsReport;
+  return `
+    <div class="card no-print">
+      <h2>📋 Rapport global — commissions par agent</h2>
+      <p style="font-size:13px;">Choisissez une période (facultatif) puis imprimez pour faire le suivi des commissions à verser à chaque agent. Sans période, le rapport couvre tout l'historique.</p>
+      <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
+        <input type="date" id="report-from-input" value="${escapeHtml(state.reportFrom)}" max="${today}" style="margin-bottom:0; flex:1;">
+        <input type="date" id="report-to-input" value="${escapeHtml(state.reportTo)}" max="${today}" style="margin-bottom:0; flex:1;">
+        <button class="primary" id="report-apply-btn" type="button" style="margin:0;">Appliquer</button>
+      </div>
+      ${(state.reportFrom || state.reportTo) ? `<button class="secondary" id="report-reset-btn" type="button">Revenir à tout l'historique</button>` : ''}
+      ${rep ? `<button class="primary" id="report-print-btn" type="button" style="width:100%; margin-top:10px;">🖨️ Imprimer</button>` : ''}
+    </div>
+    ${!rep ? '<div class="center-msg">Chargement...</div>' : `
+      <div id="agents-report-printable">
+        <h2 style="text-align:center;">Rapport global — Agents Konkou</h2>
+        <p style="text-align:center; font-size:13px;">Période : ${rep.from ? `du ${rep.from}` : 'depuis le début'} ${rep.to ? `au ${rep.to}` : "jusqu'à aujourd'hui"} · Édité le ${today}</p>
+        <table style="width:100%; border-collapse:collapse; font-size:13px; margin-top:10px;">
+          <thead>
+            <tr style="border-bottom:2px solid #333;">
+              <th style="text-align:left; padding:6px;">Code Agent</th>
+              <th style="text-align:left; padding:6px;">Nom et Prénom</th>
+              <th style="text-align:left; padding:6px;">Téléphone</th>
+              <th style="text-align:right; padding:6px;">Commissions générées</th>
+              <th style="text-align:right; padding:6px;">Retraits effectués</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${rep.agents.map(a => `
+              <tr style="border-bottom:1px solid #ccc;">
+                <td style="padding:6px;">${escapeHtml(a.fullCode)}</td>
+                <td style="padding:6px;">${escapeHtml(a.firstName)} ${escapeHtml(a.lastName)}</td>
+                <td style="padding:6px;">${escapeHtml(a.phone)}</td>
+                <td style="padding:6px; text-align:right;">${a.commissionHtg} HTG</td>
+                <td style="padding:6px; text-align:right;">${a.withdrawalsCount} (${a.withdrawalsHtg} HTG)</td>
+              </tr>
+            `).join('')}
+          </tbody>
+          <tfoot>
+            <tr style="border-top:2px solid #333; font-weight:800;">
+              <td style="padding:6px;" colspan="3">Total</td>
+              <td style="padding:6px; text-align:right;">${rep.totals.commissionHtg} HTG</td>
+              <td style="padding:6px; text-align:right;">${rep.totals.withdrawalsCount} (${rep.totals.withdrawalsHtg} HTG)</td>
+            </tr>
+          </tfoot>
+        </table>
+      </div>
+    `}
+  `;
+}
+
 // ---------- Candidatures Agent ----------
 const ID_TYPE_LABELS = { cin: "Carte d'Identification Nationale", passeport: 'Passeport', permis: 'Permis de conduire' };
 
 function renderAgentsSection() {
   const tabs = [['pending', 'En attente'], ['active', 'Actifs'], ['rejected', 'Rejetés']];
-  return `
-    <div class="grid-2" style="grid-template-columns: repeat(3, 1fr); margin-top:14px;">
+  const tabsHtml = `
+    <div class="grid-2" style="grid-template-columns: repeat(4, 1fr); margin-top:14px;">
       ${tabs.map(([key, label]) => `
-        <button class="tile" data-agent-filter="${key}" style="font-size:13px; ${state.statusFilter === key ? 'outline:2px solid var(--green);' : ''}">${label}</button>
+        <button class="tile" data-agent-filter="${key}" style="font-size:13px; ${state.agentsView === 'list' && state.statusFilter === key ? 'outline:2px solid var(--green);' : ''}">${label}</button>
       `).join('')}
+      <button class="tile" data-agent-filter="report" style="font-size:13px; ${state.agentsView === 'report' ? 'outline:2px solid var(--green);' : ''}">📋 Rapport global</button>
     </div>
+  `;
+  if (state.agentsView === 'report') return tabsHtml + renderAgentsReport();
+  return tabsHtml + `
     ${state.agents.length === 0 ? `<div class="card"><p>Aucune candidature "${statusLabel(state.statusFilter)}".</p></div>` : state.agents.map(a => `
       <div class="card">
-        <h2>N° ${escapeHtml(a.agent_number)} — ${escapeHtml(a.first_name)} ${escapeHtml(a.last_name)} — ${escapeHtml(a.agent_code)}</h2>
+        <h2>${escapeHtml(a.full_code || a.agent_code)} — ${escapeHtml(a.first_name)} ${escapeHtml(a.last_name)}</h2>
         <p>Téléphone : ${escapeHtml(a.user_phone)} · Né(e) le ${escapeHtml(a.birth_date)}</p>
         <p>Pièce d'identité : ${escapeHtml(ID_TYPE_LABELS[a.id_type] || a.id_type)}${a.id_number ? ` — n° ${escapeHtml(a.id_number)}` : ''}</p>
         ${(a.city || a.address) ? `<p>📍 ${[a.city, a.address].filter(Boolean).map(escapeHtml).join(' — ')}</p>` : ''}
@@ -493,7 +559,7 @@ function renderRefillsSection() {
     </div>
     ${state.refills.length === 0 ? `<div class="card"><p>Aucun renflouement "${statusLabel(state.statusFilter)}".</p></div>` : state.refills.map(r => `
       <div class="card">
-        <h2>${escapeHtml(r.agent_code)} — ${escapeHtml(r.first_name)} ${escapeHtml(r.last_name)}</h2>
+        <h2>${escapeHtml(r.full_code || r.agent_code)} — ${escapeHtml(r.first_name)} ${escapeHtml(r.last_name)}</h2>
         <p>Téléphone : ${escapeHtml(r.user_phone)}</p>
         <p><strong>${r.amount_htg} HTG</strong> déposé · frais ${r.fee_percent}% (${r.platform_fee_htg} HTG) · crédité : <strong>${r.credited_htg} HTG</strong></p>
         <p style="font-size:12px;">Demandé le ${escapeHtml(r.requested_at)}${r.processed_at ? ` · Traité le ${escapeHtml(r.processed_at)}` : ''}</p>
@@ -738,10 +804,26 @@ async function loadVipPurchases() {
 }
 
 async function loadAgents() {
+  if (state.agentsView === 'report') return loadAgentsReport();
   setState({ loading: true, error: '' });
   try {
     const data = await api(`/admin/agents?status=${state.statusFilter}`);
     setState({ agents: data.agents, loading: false });
+  } catch (err) {
+    if (err.status === 401) { logout(); return; }
+    setState({ error: err.message, loading: false });
+  }
+}
+
+async function loadAgentsReport() {
+  setState({ loading: true, error: '' });
+  try {
+    const params = new URLSearchParams();
+    if (state.reportFrom) params.set('from', state.reportFrom);
+    if (state.reportTo) params.set('to', state.reportTo);
+    const query = params.toString() ? `?${params.toString()}` : '';
+    const data = await api(`/admin/agents/report${query}`);
+    setState({ agentsReport: data, loading: false });
   } catch (err) {
     if (err.status === 401) { logout(); return; }
     setState({ error: err.message, loading: false });
@@ -821,6 +903,7 @@ function bind() {
     btn.addEventListener('click', () => {
       state.section = btn.dataset.section;
       state.statusFilter = 'pending';
+      state.agentsView = 'list';
       loadSection();
     });
   });
@@ -870,7 +953,16 @@ function bind() {
   });
 
   document.querySelectorAll('[data-agent-filter]').forEach(btn => {
-    btn.addEventListener('click', () => { state.statusFilter = btn.dataset.agentFilter; loadAgents(); });
+    btn.addEventListener('click', () => {
+      const key = btn.dataset.agentFilter;
+      if (key === 'report') {
+        state.agentsView = 'report';
+      } else {
+        state.agentsView = 'list';
+        state.statusFilter = key;
+      }
+      loadAgents();
+    });
   });
   document.querySelectorAll('[data-agent-approve]').forEach(btn => {
     btn.addEventListener('click', () => actOnAgent(btn.dataset.agentApprove, 'approve'));
@@ -878,6 +970,15 @@ function bind() {
   document.querySelectorAll('[data-agent-reject]').forEach(btn => {
     btn.addEventListener('click', () => actOnAgent(btn.dataset.agentReject, 'reject'));
   });
+
+  document.getElementById('report-from-input')?.addEventListener('change', (e) => { state.reportFrom = e.target.value; });
+  document.getElementById('report-to-input')?.addEventListener('change', (e) => { state.reportTo = e.target.value; });
+  document.getElementById('report-apply-btn')?.addEventListener('click', () => loadAgentsReport());
+  document.getElementById('report-reset-btn')?.addEventListener('click', () => {
+    setState({ reportFrom: '', reportTo: '' });
+    loadAgentsReport();
+  });
+  document.getElementById('report-print-btn')?.addEventListener('click', () => window.print());
 
   document.querySelectorAll('[data-refill-filter]').forEach(btn => {
     btn.addEventListener('click', () => { state.statusFilter = btn.dataset.refillFilter; loadRefills(); });

@@ -2,7 +2,7 @@ import crypto from 'node:crypto';
 import db from '../db.js';
 import { signToken } from '../utils.js';
 import { adminConfirmOtp, listPendingOtps, rejectOtp } from '../otp.js';
-import { getAgentCapitalFeePercent, formatAgentNumber } from './agents.js';
+import { getAgentCapitalFeePercent, formatAgentNumber, fullAgentCode } from './agents.js';
 
 // Single shared password for the person(s) running the cash pickup point. Fine for a
 // one/few-person operation; if you have several agents who need distinct accountability
@@ -221,7 +221,7 @@ export function listAgentApplications(statusFilter) {
     WHERE a.status = ?
     ORDER BY a.applied_at ASC
   `).all(status);
-  const withNumbers = rows.map(r => ({ ...r, agent_number: formatAgentNumber(r.id) }));
+  const withNumbers = rows.map(r => ({ ...r, agent_number: formatAgentNumber(r.id), full_code: fullAgentCode(r.agent_code, r.id) }));
   return { status: 200, data: { status, agents: withNumbers } };
 }
 
@@ -270,14 +270,15 @@ export function listAgentRefills(statusFilter) {
   const status = ['pending', 'confirmed', 'rejected'].includes(statusFilter) ? statusFilter : 'pending';
   const rows = db.prepare(`
     SELECT r.id, r.amount_htg, r.fee_percent, r.platform_fee_htg, r.credited_htg, r.status, r.requested_at, r.processed_at,
-           a.agent_code, a.first_name, a.last_name, u.phone as user_phone
+           a.id as agent_id, a.agent_code, a.first_name, a.last_name, u.phone as user_phone
     FROM agent_refills r
     JOIN agents a ON a.id = r.agent_id
     JOIN users u ON u.id = a.user_id
     WHERE r.status = ?
     ORDER BY r.requested_at ASC
   `).all(status);
-  return { status: 200, data: { status, refills: rows } };
+  const withCodes = rows.map(r => ({ ...r, full_code: fullAgentCode(r.agent_code, r.agent_id) }));
+  return { status: 200, data: { status, refills: withCodes } };
 }
 
 export function confirmAgentRefill(body) {
@@ -440,6 +441,69 @@ export function getRevenueSummary(dateFilter) {
         depositServiceFees: { totalHtg: r2(depositFees.total), count: depositFees.count },
         vipSales: { totalHtg: r2(vipSales.total), count: vipSales.count }
       }
+    }
+  };
+}
+
+// ---------- Rapport global Agents (suivi des commissions à verser) ----------
+// Toutes les commissions dues à chaque agent sur une période donnée, pour que
+// l'administration sache combien remettre à chaque agent lors des suivis périodiques
+// (paiement de commission). from/to (optionnels, 'YYYY-MM-DD') filtrent les retraits
+// PAYÉS (cashouts.status='paid') sur leur date de traitement — un retrait encore en
+// attente ou rejeté ne génère aucune commission, donc n'est jamais compté ici. Sans
+// from/to, on prend tout l'historique. Couvre tous les agents du système (peu importe
+// leur statut actuel), pour ne perdre la trace d'aucune commission déjà générée par un
+// agent depuis désactivé/rejeté.
+export function getAgentsGlobalReport(query) {
+  const { from, to } = query || {};
+  const validFrom = from && ISO_DATE_RE.test(from) ? from : null;
+  const validTo = to && ISO_DATE_RE.test(to) ? to : null;
+
+  const agentRows = db.prepare(`
+    SELECT a.id, a.agent_code, a.first_name, a.last_name, a.status, u.phone as user_phone
+    FROM agents a JOIN users u ON u.id = a.user_id
+    ORDER BY a.agent_code ASC
+  `).all();
+
+  let dateClause = '';
+  const params = [];
+  if (validFrom) { dateClause += ' AND date(processed_at) >= ?'; params.push(validFrom); }
+  if (validTo) { dateClause += ' AND date(processed_at) <= ?'; params.push(validTo); }
+
+  const stmt = db.prepare(
+    `SELECT COALESCE(SUM(commission_htg), 0) as commissionHtg, COALESCE(SUM(net_payout_htg), 0) as withdrawalsHtg, COUNT(*) as withdrawalsCount
+     FROM cashouts WHERE agent_id = ? AND status = 'paid'${dateClause}`
+  );
+
+  const r2 = (n) => Math.round(n * 100) / 100;
+
+  const rows = agentRows.map(a => {
+    const agg = stmt.get(a.id, ...params);
+    return {
+      fullCode: fullAgentCode(a.agent_code, a.id),
+      firstName: a.first_name,
+      lastName: a.last_name,
+      phone: a.user_phone,
+      status: a.status,
+      commissionHtg: r2(agg.commissionHtg),
+      withdrawalsCount: agg.withdrawalsCount,
+      withdrawalsHtg: r2(agg.withdrawalsHtg)
+    };
+  });
+
+  const totals = rows.reduce((acc, r) => ({
+    commissionHtg: acc.commissionHtg + r.commissionHtg,
+    withdrawalsCount: acc.withdrawalsCount + r.withdrawalsCount,
+    withdrawalsHtg: acc.withdrawalsHtg + r.withdrawalsHtg
+  }), { commissionHtg: 0, withdrawalsCount: 0, withdrawalsHtg: 0 });
+
+  return {
+    status: 200,
+    data: {
+      from: validFrom,
+      to: validTo,
+      agents: rows,
+      totals: { commissionHtg: r2(totals.commissionHtg), withdrawalsCount: totals.withdrawalsCount, withdrawalsHtg: r2(totals.withdrawalsHtg) }
     }
   };
 }

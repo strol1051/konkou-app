@@ -49,11 +49,17 @@ function calcAge(birthDate) {
   return age;
 }
 
-// Sequential agent number — "00001" for the first agent ever to apply, "00002" for the
+// Sequential agent number — "000001" for the first agent ever to apply, "000002" for the
 // next, and so on. Reuses the agents.id primary key (assigned once, at first-ever
 // application; a later re-application after a rejection UPDATEs the same row rather
 // than inserting a new one, so the original number is kept, not reassigned).
-export function formatAgentNumber(id) { return String(id).padStart(5, '0'); }
+export function formatAgentNumber(id) { return String(id).padStart(6, '0'); }
+
+// "Code Agent" complet affiché aux Users/Admin : 3 lettres du nom + 2 lettres du prénom
+// (agent_code, voir makeAgentCode) suivi du numéro séquentiel à 6 chiffres (agentNumber),
+// concaténés en un seul jeton — ex. "LEDMA000042". Sert d'identifiant unique lisible pour
+// un agent, à afficher partout à côté de son nom/prénom/adresse (demande explicite).
+export function fullAgentCode(agentCode, agentId) { return `${agentCode}${formatAgentNumber(agentId)}`; }
 
 // Ceiling for the agent's next capital refill: 125% (by default) of their most recent
 // confirmed deposit — a growing credit line that rewards agents who keep operating.
@@ -67,6 +73,7 @@ function publicAgent(a) {
     agentNumber: formatAgentNumber(a.id),
     status: a.status,
     agentCode: a.agent_code,
+    fullCode: fullAgentCode(a.agent_code, a.id),
     lastName: a.last_name,
     firstName: a.first_name,
     idType: a.id_type,
@@ -131,6 +138,7 @@ export function applyAgent(userId, body) {
       message: `Candidature enregistrée. Déposez ${capital} HTG à notre bureau pour l'activer.`,
       agentNumber: formatAgentNumber(agentId),
       agentCode,
+      fullCode: fullAgentCode(agentCode, agentId),
       capitalHtg: capital,
       status: 'pending'
     }
@@ -304,6 +312,7 @@ export function listActiveAgents() {
       agents: rows.map(a => ({
         agentNumber: formatAgentNumber(a.id),
         agentCode: a.agent_code,
+        fullCode: fullAgentCode(a.agent_code, a.id),
         firstName: a.first_name,
         lastName: a.last_name,
         city: a.city,
@@ -353,6 +362,7 @@ export function getAgentDashboard(userId) {
     data: {
       agentNumber: formatAgentNumber(agent.id),
       agentCode: agent.agent_code,
+      fullCode: fullAgentCode(agent.agent_code, agent.id),
       firstName: agent.first_name,
       lastName: agent.last_name,
       city: agent.city,
