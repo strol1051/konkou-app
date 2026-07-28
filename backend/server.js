@@ -597,6 +597,12 @@ const server = http.createServer(async (req, res) => {
       return sendJson(res, status, data);
     }
 
+    if (pathname === '/api/admin/settings/blue-color' && method === 'POST') {
+      if (!requireAdmin(req, res)) return;
+      const { status, data } = themeRoutes.setBlueColor(body);
+      return sendJson(res, status, data);
+    }
+
     if (pathname === '/api/admin/settings/bg-image' && method === 'POST') {
       if (!requireAdmin(req, res)) return;
       const { status, data } = themeRoutes.setBgImage(body);

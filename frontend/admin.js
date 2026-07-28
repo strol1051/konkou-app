@@ -73,13 +73,30 @@ const THEMES = {
   }
 };
 
-function applyThemeVars(themeKey, bgColor) {
+// Assombrit une couleur hex ("#rrggbb") d'un facteur (0–1) — voir app.js pour la
+// documentation complète (même fonction, dupliquée ici car admin.js/app.js ne partagent
+// pas de module commun).
+function darkenHex(hex, factor) {
+  const m = /^#([0-9a-f]{6})$/i.exec(hex || '');
+  if (!m) return hex;
+  const num = parseInt(m[1], 16);
+  const channel = (shift) => Math.round(((num >> shift) & 255) * factor).toString(16).padStart(2, '0');
+  return `#${channel(16)}${channel(8)}${channel(0)}`;
+}
+
+function applyThemeVars(themeKey, bgColor, blueColor) {
   const theme = THEMES[themeKey] || THEMES.default;
   const root = document.documentElement.style;
   ['--blue', '--blue-2', '--red', '--bg', '--card', '--card-2'].forEach(v => root.removeProperty(v));
   Object.entries(theme.vars).forEach(([k, v]) => root.setProperty(k, v));
   // Couleur de fond personnalisée (indépendante du thème) — surcharge --bg si définie.
   if (bgColor) root.setProperty('--bg', bgColor);
+  // Couleur bleu foncé personnalisée (indépendante du thème) — surcharge --blue ; --blue-2
+  // est dérivée automatiquement (assombrie) — voir app.js pour la documentation complète.
+  if (blueColor) {
+    root.setProperty('--blue', blueColor);
+    root.setProperty('--blue-2', darkenHex(blueColor, 0.55));
+  }
 }
 
 function applyThemeParticles(themeKey) {
@@ -147,7 +164,7 @@ async function applyThemeFromServer() {
   try {
     const res = await fetch('/api/theme');
     const data = await res.json();
-    applyThemeVars(data.theme, data.bgColor);
+    applyThemeVars(data.theme, data.bgColor, data.blueColor);
     applyThemeParticles(data.theme);
     applyBgImage(data.bgImage);
     applyTopbarBgImage(data.topbarBgImage);
@@ -234,6 +251,7 @@ const state = {
   contactWhatsapp: null, // numéro configuré pour "Nous contacter" (null tant que non défini)
   currentTheme: 'default', // thème saisonnier actif (voir THEMES plus haut)
   bgColor: '', // couleur de fond personnalisée ('' = pas de surcharge, fond du thème actif)
+  blueColor: '', // couleur bleu foncé personnalisée ('' = pas de surcharge, bleu du thème actif)
   bgImage: '', // URL de la photo de fond personnalisée ('' = filigrane logo par défaut)
   topbarBgImage: '', // URL de la photo dédiée à la barre du haut ('' = dégradé du thème actif)
   logo: '', // URL du logo personnalisé ('' = frontend/logo.png par défaut)
@@ -612,6 +630,18 @@ function renderSettingsSection() {
       ${state.bgColor ? `<button class="secondary" id="bg-color-reset-btn" type="button">Réinitialiser (revenir au fond du thème)</button>` : ''}
     </div>
     <div class="card">
+      <h2>🔷 Couleur bleu foncé personnalisée</h2>
+      <p style="font-size:13px;">Indépendante des thèmes ci-dessus — remplace le bleu utilisé dans la barre du haut (dégradé) et les badges des jeux sur l'accueil, sans toucher au reste des couleurs du thème actif. Une seule couleur à choisir : le second ton du dégradé est calculé automatiquement (version assombrie). S'applique immédiatement pour tout le monde.</p>
+      <p style="font-size:13px; color:var(--muted);">
+        ${state.blueColor ? `Couleur actuelle : <strong style="color:var(--text);">${escapeHtml(state.blueColor)}</strong>` : "Aucune surcharge — l'app utilise le bleu par défaut du thème actif."}
+      </p>
+      <div style="display:flex; gap:10px; align-items:center; margin-bottom:12px;">
+        <input type="color" id="blue-color-input" value="${state.blueColor || THEMES[state.currentTheme]?.vars['--blue'] || '#00209F'}" style="width:56px; height:44px; padding:2px; margin-bottom:0; cursor:pointer;">
+        <button class="primary" id="blue-color-apply-btn" type="button" style="flex:1; margin:0;">Appliquer</button>
+      </div>
+      ${state.blueColor ? `<button class="secondary" id="blue-color-reset-btn" type="button">Réinitialiser (revenir au bleu du thème)</button>` : ''}
+    </div>
+    <div class="card">
       <h2>🖼️ Photo de fond personnalisée</h2>
       <p style="font-size:13px;">Remplace le filigrane du logo par une photo en plein écran, indépendamment du thème et de la couleur de fond ci-dessus. L'image est automatiquement redimensionnée avant l'envoi (max 3 Mo côté serveur). S'applique immédiatement pour tout le monde.</p>
       ${state.bgImage ? `
@@ -735,7 +765,7 @@ async function loadContactSettings() {
       api('/admin/settings/contact-whatsapp'),
       api('/admin/settings/theme')
     ]);
-    setState({ contactWhatsapp: contact.whatsappNumber, currentTheme: theme.theme, bgColor: theme.bgColor || '', bgImage: theme.bgImage || '', topbarBgImage: theme.topbarBgImage || '', logo: theme.logo || '', loading: false });
+    setState({ contactWhatsapp: contact.whatsappNumber, currentTheme: theme.theme, bgColor: theme.bgColor || '', blueColor: theme.blueColor || '', bgImage: theme.bgImage || '', topbarBgImage: theme.topbarBgImage || '', logo: theme.logo || '', loading: false });
   } catch (err) {
     if (err.status === 401) { logout(); return; }
     setState({ error: err.message, loading: false });
@@ -876,7 +906,7 @@ function bind() {
       const theme = btn.dataset.themePick;
       try {
         const data = await api('/admin/settings/theme', { method: 'POST', body: { theme } });
-        applyThemeVars(data.theme, state.bgColor);
+        applyThemeVars(data.theme, state.bgColor, state.blueColor);
         applyThemeParticles(data.theme);
         setState({ currentTheme: data.theme, success: data.message, error: '' });
       } catch (err) {
@@ -890,7 +920,7 @@ function bind() {
       const bgColor = document.getElementById('bg-color-input').value;
       try {
         const data = await api('/admin/settings/bg-color', { method: 'POST', body: { bgColor } });
-        applyThemeVars(state.currentTheme, data.bgColor);
+        applyThemeVars(state.currentTheme, data.bgColor, state.blueColor);
         setState({ bgColor: data.bgColor, success: data.message, error: '' });
       } catch (err) {
         setState({ error: err.message });
@@ -902,8 +932,33 @@ function bind() {
     bgColorResetBtn.addEventListener('click', async () => {
       try {
         const data = await api('/admin/settings/bg-color', { method: 'POST', body: { bgColor: '' } });
-        applyThemeVars(state.currentTheme, '');
+        applyThemeVars(state.currentTheme, '', state.blueColor);
         setState({ bgColor: '', success: data.message, error: '' });
+      } catch (err) {
+        setState({ error: err.message });
+      }
+    });
+  }
+  const blueColorApplyBtn = document.getElementById('blue-color-apply-btn');
+  if (blueColorApplyBtn) {
+    blueColorApplyBtn.addEventListener('click', async () => {
+      const blueColor = document.getElementById('blue-color-input').value;
+      try {
+        const data = await api('/admin/settings/blue-color', { method: 'POST', body: { blueColor } });
+        applyThemeVars(state.currentTheme, state.bgColor, data.blueColor);
+        setState({ blueColor: data.blueColor, success: data.message, error: '' });
+      } catch (err) {
+        setState({ error: err.message });
+      }
+    });
+  }
+  const blueColorResetBtn = document.getElementById('blue-color-reset-btn');
+  if (blueColorResetBtn) {
+    blueColorResetBtn.addEventListener('click', async () => {
+      try {
+        const data = await api('/admin/settings/blue-color', { method: 'POST', body: { blueColor: '' } });
+        applyThemeVars(state.currentTheme, state.bgColor, '');
+        setState({ blueColor: '', success: data.message, error: '' });
       } catch (err) {
         setState({ error: err.message });
       }

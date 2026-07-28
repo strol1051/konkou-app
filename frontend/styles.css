@@ -444,6 +444,7 @@ textarea {
 }
 
 .tabbar button.active { color: var(--red); }
+.tabbar button.active .icon { text-shadow: 0 0 10px rgba(38, 214, 255, 0.55); }
 .tabbar button .icon { font-size: 20px; }
 
 .auth-screen {

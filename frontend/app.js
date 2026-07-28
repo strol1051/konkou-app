@@ -97,7 +97,19 @@ const THEMES = {
   }
 };
 
-function applyThemeVars(themeKey, bgColor) {
+// Assombrit une couleur hex ("#rrggbb") d'un facteur (0–1) — utilisé pour dériver
+// --blue-2 (bas du dégradé de la barre du haut) à partir de la seule couleur --blue que
+// l'admin choisit (voir applyThemeVars ci-dessous), plutôt que de lui demander deux
+// couleurs à assortir lui-même.
+function darkenHex(hex, factor) {
+  const m = /^#([0-9a-f]{6})$/i.exec(hex || '');
+  if (!m) return hex;
+  const num = parseInt(m[1], 16);
+  const channel = (shift) => Math.round(((num >> shift) & 255) * factor).toString(16).padStart(2, '0');
+  return `#${channel(16)}${channel(8)}${channel(0)}`;
+}
+
+function applyThemeVars(themeKey, bgColor, blueColor) {
   const theme = THEMES[themeKey] || THEMES.default;
   const root = document.documentElement.style;
   // Réinitialise d'abord aux valeurs par défaut (celles de :root dans styles.css) avant
@@ -108,6 +120,14 @@ function applyThemeVars(themeKey, bgColor) {
   // Couleur de fond personnalisée (indépendante du thème, réglée par l'admin) — surcharge
   // le --bg du thème s'il y en a une, laisse le fond du thème sinon.
   if (bgColor) root.setProperty('--bg', bgColor);
+  // Couleur bleu foncé personnalisée (admin, indépendante du thème actif) — surcharge
+  // --blue ; --blue-2 (bas du dégradé de la barre du haut, voir .topbar dans styles.css)
+  // est dérivée automatiquement en assombrissant la même couleur, pour ne demander qu'UNE
+  // seule couleur à l'admin tout en gardant un dégradé à deux tons cohérent.
+  if (blueColor) {
+    root.setProperty('--blue', blueColor);
+    root.setProperty('--blue-2', darkenHex(blueColor, 0.55));
+  }
   updateGameContrastColor();
 }
 
@@ -228,27 +248,20 @@ function applyTopbarBgImage(url) {
   }
 }
 
-// Retenu à part (comme logoUrl plus haut) pour que renderHome() puisse afficher une
-// bannière "thème actif" (voir "Mise en avant du thème saisonnier", juillet 2026) sans
-// avoir à refaire un appel réseau dédié — la valeur est déjà récupérée ici de toute façon.
-let activeThemeKey = 'default';
-
+// Le thème saisonnier actif n'est volontairement PAS mis en avant côté joueur (retiré en
+// juillet 2026 après un premier essai en bannière sur l'accueil) — seul l'admin voit/
+// choisit le thème actif, depuis /admin.html → Réglages (les couleurs/décor du thème
+// s'appliquent quand même normalement pour tout le monde, seule la bannière annonçant
+// "Thème X actif" a été retirée du joueur).
 async function applyThemeFromServer() {
   try {
     const res = await fetch('/api/theme');
     const data = await res.json();
-    activeThemeKey = data.theme || 'default';
-    applyThemeVars(data.theme, data.bgColor);
+    applyThemeVars(data.theme, data.bgColor, data.blueColor);
     applyThemeParticles(data.theme);
     applyBgImage(data.bgImage);
     applyTopbarBgImage(data.topbarBgImage);
     applyLogo(data.logo);
-    // state/render() sont définis plus bas dans le fichier, mais ce point du code ne
-    // s'exécute qu'après le "await" ci-dessus — donc après la fin de l'exécution
-    // synchrone du module, qui a le temps de tout définir avant la résolution de la
-    // requête réseau. Ne redessine que si l'accueil est déjà affiché, pour ne jamais
-    // interrompre une saisie de formulaire en cours ailleurs.
-    if (state.view === 'home') render();
   } catch {
     // Hors ligne ou erreur réseau : on garde les couleurs par défaut de styles.css.
   }
@@ -480,7 +493,7 @@ function render() {
 }
 
 function tabBtn(view, icon, label) {
-  const active = state.view === view || (view === 'home' && ['stakePrompt', 'trivia', 'puzzle'].includes(state.view));
+  const active = state.view === view || (view === 'home' && ['stakePrompt', 'trivia', 'puzzle', 'dailyChallenge'].includes(state.view));
   return `<button data-view="${view}" class="${active ? 'active' : ''}"><span class="icon">${icon}</span>${label}</button>`;
 }
 
@@ -788,6 +801,7 @@ function bindAgentRegisterEvents() {
 function renderView() {
   switch (state.view) {
     case 'home': return renderHome();
+    case 'dailyChallenge': return renderDailyChallengeChoice();
     case 'stakePrompt': return renderStakePrompt();
     case 'trivia': return renderGameScreen('trivia');
     case 'puzzle': return renderGameScreen('puzzle');
@@ -802,32 +816,28 @@ function renderView() {
 function renderHome() {
   const bonusPlays = state.user?.bonusPlays ?? 0;
   const dc = state.user?.dailyChallenge;
-  const theme = THEMES[activeThemeKey] || THEMES.default;
   return `
     ${state.success ? `<div class="success-banner">${state.success}</div>` : ''}
     ${state.error ? `<div class="error-banner">${state.error}</div>` : ''}
-    ${activeThemeKey !== 'default' ? `
-    <div class="card glow-card">
-      <p style="font-size:13px; margin:0; display:flex; align-items:center; gap:10px;">
-        <span style="font-size:24px; line-height:1;">${theme.particle || '✨'}</span>
-        <span>Le thème <strong>${escapeHtml(theme.label)}</strong> est actif en ce moment — décor et questions spéciales tant que ça dure !</span>
-      </p>
-    </div>
-    ` : ''}
     <div class="card">
       <h2>Bonjour ${escapeHtml(state.user?.name ?? '')} 👋</h2>
       <p>Jouez chaque jour pour gagner des points, grimper au classement et les retirer en espèces chez notre agent.</p>
       ${bonusPlays > 0 ? `<p style="font-size:18px; font-weight:800; color:var(--game-contrast);">🎟️ <strong>${bonusPlays}</strong> partie(s) bonus disponible(s) (au-delà de la limite gratuite du jour).</p>` : ''}
     </div>
-    ${dc ? `
-    <div class="card glow-card ${dc.completedToday ? 'challenge-done' : ''}">
+    ${dc ? (dc.completedToday ? `
+    <div class="card glow-card challenge-done">
       <h2>🎯 Défi du jour</h2>
       <p style="font-size:13px;">Obtenez au moins <strong>${dc.thresholdPercent}%</strong> de bonnes réponses dans une seule partie (quiz ou sprint) aujourd'hui.</p>
-      ${dc.completedToday
-        ? `<p style="font-size:14px; font-weight:700; color:var(--green); margin:0;">✅ Relevé aujourd'hui — +${dc.rewardPoints} pts crédités</p>`
-        : `<p style="font-size:13px; color:var(--muted); margin:0;">Pas encore relevé — récompense : <strong>+${dc.rewardPoints} pts</strong></p>`}
+      <p style="font-size:14px; font-weight:700; color:var(--green); margin:0;">✅ Relevé aujourd'hui par <strong>${escapeHtml(state.user?.name ?? '')}</strong> (${escapeHtml(state.user?.referralCode ?? '')}) — +${dc.rewardPoints} pts crédités</p>
     </div>
-    ` : ''}
+    ` : `
+    <button type="button" class="card glow-card" id="daily-challenge-card" style="width:100%; text-align:left; cursor:pointer; border:none; font:inherit; color:inherit;">
+      <h2>🎯 Défi du jour</h2>
+      <p style="font-size:13px;">Obtenez au moins <strong>${dc.thresholdPercent}%</strong> de bonnes réponses dans une seule partie (quiz ou sprint) aujourd'hui.</p>
+      <p style="font-size:13px; color:var(--muted); margin:0 0 8px;">Pas encore relevé — récompense : <strong>+${dc.rewardPoints} pts</strong></p>
+      <span class="panel-cta">Relever le défi <span aria-hidden="true">→</span></span>
+    </button>
+    `) : ''}
     <div class="game-hub">
       <button class="game-panel" data-start="trivia">
         <div class="icon-badge">🧠</div>
@@ -862,6 +872,52 @@ function bindHomeEvents() {
       setState({ view: 'stakePrompt', error: '' });
     });
   });
+
+  // Carte "Défi du jour" — uniquement présente/cliquable tant qu'il n'est pas relevé (voir
+  // renderHome() : une fois relevé, la carte redevient un <div> non interactif). Mène à un
+  // choix de jeu dédié plutôt que de présélectionner l'un des deux, le défi comptant pour
+  // n'importe lequel des deux jeux.
+  const challengeCard = document.getElementById('daily-challenge-card');
+  if (challengeCard) {
+    challengeCard.addEventListener('click', () => setState({ view: 'dailyChallenge', error: '' }));
+  }
+}
+
+// ---------- DÉFI DU JOUR (choix du jeu) ----------
+function renderDailyChallengeChoice() {
+  const dc = state.user?.dailyChallenge;
+  return `
+    <div class="card glow-card">
+      <h2>🎯 Défi du jour</h2>
+      <p style="font-size:13px;">Obtenez au moins <strong>${dc?.thresholdPercent ?? 80}%</strong> de bonnes réponses dans une seule partie — quiz ou sprint, au choix — pour gagner <strong>+${dc?.rewardPoints ?? 50} pts</strong> bonus.</p>
+    </div>
+    <div class="game-hub">
+      <button class="game-panel" data-start="trivia">
+        <div class="icon-badge">🧠</div>
+        <h3>Quiz culture générale</h3>
+        <p>5 questions · 25 secondes</p>
+        <div class="panel-cta">Jouer <span aria-hidden="true">→</span></div>
+      </button>
+      <button class="game-panel" data-start="puzzle">
+        <div class="icon-badge">🔢</div>
+        <h3>Sprint de calcul</h3>
+        <p>8 calculs · 25 secondes</p>
+        <div class="panel-cta">Jouer <span aria-hidden="true">→</span></div>
+      </button>
+    </div>
+    <button class="link-btn" id="daily-challenge-back" style="display:block; margin-top:4px;">← Retour à l'accueil</button>
+  `;
+}
+
+function bindDailyChallengeChoiceEvents() {
+  document.querySelectorAll('[data-start]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      pendingGameType = btn.dataset.start;
+      setState({ view: 'stakePrompt', error: '' });
+    });
+  });
+  const backBtn = document.getElementById('daily-challenge-back');
+  if (backBtn) backBtn.addEventListener('click', () => setState({ view: 'home', error: '' }));
 }
 
 // ---------- MISE (avant de jouer) ----------
@@ -1245,7 +1301,7 @@ function leaderboardHtml(data) {
     <div class="grid-2" style="grid-template-columns: repeat(3, 1fr);">
       ${periods.map(([key, label]) => `<button class="tile" data-period="${key}" style="${leaderboardPeriod === key ? 'outline:2px solid var(--red);' : ''}">${label}</button>`).join('')}
     </div>
-    <div class="card">
+    <div class="card glow-card">
       <h2>🏆 Classement</h2>
       ${data.leaderboard.length === 0 ? '<p>Aucune partie jouée pour cette période.</p>' : ''}
       ${data.leaderboard.map(r => `
@@ -1345,7 +1401,7 @@ function vipCardHtml(vip, agents) {
     `;
   }
   return `
-    <div class="card">
+    <div class="card glow-card">
       <h2>👑 Devenir VIP</h2>
       <p style="font-size:13px;">${vip.priceHtg} HTG chez un agent pour +${vip.extraDailyPlays} parties gratuites/jour pendant ${vip.durationDays} jours.</p>
       ${vip.pending ? `<p style="font-size:12px;">Demande en attente de confirmation (code ${escapeHtml(vip.pending.code)}).</p>` : `
@@ -1408,7 +1464,7 @@ function walletHtml(data, agents, vip) {
         <button class="secondary" id="dismiss-vip-code">J'ai noté le code</button>
       </div>
     ` : ''}
-    <div class="card">
+    <div class="card glow-card">
       <h2>💰 Solde</h2>
       <p style="font-size:26px; font-weight:800; color:var(--text);">${data.points} pts</p>
       <p>≈ ${data.htgValue} HTG (taux indicatif : 1 pt = ${data.rate} HTG)</p>
@@ -1602,7 +1658,7 @@ function renderProfile() {
 function profileHtml(data) {
   return `
     ${state.error ? `<div class="error-banner">${escapeHtml(state.error)}</div>` : ''}
-    <div class="card">
+    <div class="card glow-card">
       <h2>👤 ${escapeHtml(data.name)}</h2>
       <div class="stat-row"><span>Téléphone</span><span>${escapeHtml(data.phone)}</span></div>
       <div class="stat-row"><span>Points</span><span>${data.points}</span></div>
@@ -2025,6 +2081,7 @@ async function agentAction(path, id) {
 // ---------- BIND ALL VIEW EVENTS ----------
 function bindViewEvents() {
   if (state.view === 'home') bindHomeEvents();
+  if (state.view === 'dailyChallenge') bindDailyChallengeChoiceEvents();
   if (state.view === 'stakePrompt') bindStakePromptEvents();
   if (state.view === 'trivia' || state.view === 'puzzle') bindGameEvents();
   if (state.view === 'contact') bindContactEvents(() => setState({ view: 'profile', error: '', success: '' }));

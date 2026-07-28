@@ -5,6 +5,7 @@ import { DATA_DIR } from '../db.js';
 
 const SETTING_KEY = 'app_theme';
 const BG_SETTING_KEY = 'app_bg_color';
+const BLUE_SETTING_KEY = 'app_blue_color';
 const BG_IMAGE_SETTING_KEY = 'app_bg_image';
 const TOPBAR_BG_IMAGE_SETTING_KEY = 'app_topbar_bg_image';
 const LOGO_SETTING_KEY = 'app_logo';
@@ -80,6 +81,7 @@ export function getTheme() {
     data: {
       theme: getSetting(SETTING_KEY, DEFAULT_THEME),
       bgColor: getSetting(BG_SETTING_KEY, ''), // '' = pas de surcharge, on garde le fond du thème
+      blueColor: getSetting(BLUE_SETTING_KEY, ''), // '' = pas de surcharge, on garde le bleu du thème
       bgImage: getSetting(BG_IMAGE_SETTING_KEY, ''), // '' = pas de photo de fond personnalisée
       topbarBgImage: getSetting(TOPBAR_BG_IMAGE_SETTING_KEY, ''), // '' = pas de photo dans la barre du haut, juste le dégradé du thème
       logo: getSetting(LOGO_SETTING_KEY, '') // '' = logo.png par défaut (fichier livré avec l'app)
@@ -119,6 +121,24 @@ export function setBgColor(body) {
   return {
     status: 200,
     data: { message: bgColor ? 'Couleur de fond mise à jour.' : 'Couleur de fond réinitialisée (fond du thème par défaut).', bgColor }
+  };
+}
+
+// Couleur "bleu foncé" personnalisée (juillet 2026), indépendante du thème saisonnier —
+// surcharge --blue (barre du haut, badges d'icône des jeux sur l'accueil) pour n'importe
+// quel thème actif, exactement comme setBgColor ci-dessus surcharge --bg. Le frontend ne
+// dérive qu'UNE seule couleur ici : --blue-2 (bas du dégradé) est calculée automatiquement
+// en assombrissant cette même couleur (voir darkenHex() dans app.js/admin.js), pour ne pas
+// demander deux couleurs à assortir à l'admin. Un body vide/absent efface la surcharge.
+export function setBlueColor(body) {
+  const blueColor = body?.blueColor ?? '';
+  if (blueColor !== '' && !HEX_COLOR_RE.test(blueColor)) {
+    return { status: 400, data: { error: 'Couleur invalide — utilisez un format hexadécimal du type #00209F' } };
+  }
+  setSetting(BLUE_SETTING_KEY, blueColor);
+  return {
+    status: 200,
+    data: { message: blueColor ? 'Couleur bleu foncé mise à jour.' : 'Couleur bleu foncé réinitialisée (bleu du thème par défaut).', blueColor }
   };
 }
 
