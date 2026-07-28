@@ -19,12 +19,13 @@ function pwdField(name, placeholder) {
 // Champ téléphone avec préfixe "+509" fixe (non éditable) — le joueur ne tape que les 8
 // chiffres locaux, qui servent de numéro d'identifiant (voir routes/auth.js, register :
 // c'est ce numéro, une fois combiné au "509" fixe, qui sert de clé unique de compte et
-// qui est comparé à deleted_phones pour le bonus de bienvenue). Utilisé uniquement sur
-// les écrans d'INSCRIPTION (joueur et agent) — la connexion garde un champ libre pour ne
-// pas casser les comptes déjà créés avant ce changement. Le formulaire appelant doit
-// combiner "509" + la valeur soumise avant d'envoyer à l'API (voir bindAuthEvents et
-// bindAgentRegisterEvents plus bas) : le "+509" affiché n'est qu'un préfixe visuel, pas
-// une partie de la valeur du <input>.
+// qui est comparé à deleted_phones pour le bonus de bienvenue). Utilisé sur les écrans
+// d'INSCRIPTION (joueur et agent) ET de CONNEXION — tous les numéros stockés en base
+// sont déjà au format "509" + 8 chiffres (c'était déjà le format canonique avant même ce
+// préfixe visuel), donc un compte existant se connecte normalement en ne tapant que ses
+// 8 chiffres ici aussi. Le formulaire appelant doit combiner "509" + la valeur soumise
+// avant d'envoyer à l'API (voir bindAuthEvents et bindAgentRegisterEvents plus bas) : le
+// "+509" affiché n'est qu'un préfixe visuel, pas une partie de la valeur du <input>.
 function phoneField(name) {
   return `
     <div class="phone-wrap">
@@ -496,7 +497,7 @@ function renderLoginRegister() {
       <h2>${isLogin ? 'Connexion' : 'Créer un compte'}</h2>
       <form id="auth-form">
         ${!isLogin ? `<input name="name" placeholder="Nom complet" required />` : ''}
-        ${isLogin ? `<input name="phone" placeholder="Numéro de téléphone (ex: 50937123456)" required />` : phoneField('phone')}
+        ${phoneField('phone')}
         ${pwdField('password', 'Mot de passe (min. 6 caractères)')}
         ${!isLogin ? `<input name="referralCode" placeholder="Code de parrainage (optionnel)" />` : ''}
         <button class="primary" type="submit">${isLogin ? 'Se connecter' : "S'inscrire"}</button>
@@ -671,11 +672,10 @@ function bindAuthEvents() {
     e.preventDefault();
     const fd = new FormData(e.target);
     const payload = Object.fromEntries(fd.entries());
-    // À l'inscription, le champ phone (voir phoneField()) ne contient que les 8 chiffres
-    // locaux — le "+509" affiché n'est qu'un préfixe visuel, on le rajoute ici avant
-    // l'envoi. La connexion garde un champ libre (numéro complet attendu), donc rien à
-    // faire dans ce cas — voir la note dans phoneField() pour le détail du choix.
-    if (state.authMode !== 'login') payload.phone = `509${payload.phone}`;
+    // Le champ phone (voir phoneField()) ne contient que les 8 chiffres locaux, à la
+    // connexion comme à l'inscription — le "+509" affiché n'est qu'un préfixe visuel, on
+    // le rajoute ici avant l'envoi pour reconstituer le format stocké en base.
+    payload.phone = `509${payload.phone}`;
     try {
       const path = state.authMode === 'login' ? '/auth/login' : '/auth/register';
       const data = await api(path, { method: 'POST', body: payload });
