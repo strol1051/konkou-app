@@ -43,7 +43,7 @@ function removeExistingFile(settingKey) {
 // remplace l'éventuel fichier précédent, et l'écrit sur le disque persistant. Un
 // dataUrl vide efface l'image actuelle. Retourne soit { error, status }, soit
 // { url } (chemin public sous /uploads/, ou '' si l'image a été retirée).
-function saveUploadedImage(dataUrl, { settingKey, filenamePrefix, maxBytes }) {
+export function saveUploadedImage(dataUrl, { settingKey, filenamePrefix, maxBytes }) {
   if (!dataUrl) {
     removeExistingFile(settingKey);
     setSetting(settingKey, '');

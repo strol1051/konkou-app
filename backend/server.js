@@ -16,6 +16,7 @@ import * as agentsRoutes from './routes/agents.js';
 import * as accountRoutes from './routes/account.js';
 import * as contactRoutes from './routes/contact.js';
 import * as themeRoutes from './routes/theme.js';
+import * as adsRoutes from './routes/ads.js';
 import * as vipRoutes from './routes/vip.js';
 
 loadEnv();
@@ -412,6 +413,13 @@ const server = http.createServer(async (req, res) => {
       return sendJson(res, status, data);
     }
 
+    // Panneau publicitaire — public comme /api/theme (voir routes/ads.js), mais l'image
+    // n'est affichée par app.js qu'une fois le joueur/agent connecté.
+    if (pathname === '/api/ad' && method === 'GET') {
+      const { status, data } = adsRoutes.getAd();
+      return sendJson(res, status, data);
+    }
+
     if (pathname === '/api/admin/login' && method === 'POST') {
       // La route la plus sensible du serveur — limite volontairement plus stricte que
       // le login joueur. Un seul mot de passe partagé (voir routes/admin.js) rend le
@@ -600,6 +608,12 @@ const server = http.createServer(async (req, res) => {
     if (pathname === '/api/admin/settings/blue-color' && method === 'POST') {
       if (!requireAdmin(req, res)) return;
       const { status, data } = themeRoutes.setBlueColor(body);
+      return sendJson(res, status, data);
+    }
+
+    if (pathname === '/api/admin/settings/ad' && method === 'POST') {
+      if (!requireAdmin(req, res)) return;
+      const { status, data } = adsRoutes.setAd(body);
       return sendJson(res, status, data);
     }
 

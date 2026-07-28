@@ -252,6 +252,7 @@ const state = {
   currentTheme: 'default', // thème saisonnier actif (voir THEMES plus haut)
   bgColor: '', // couleur de fond personnalisée ('' = pas de surcharge, fond du thème actif)
   blueColor: '', // couleur bleu foncé personnalisée ('' = pas de surcharge, bleu du thème actif)
+  adImage: '', // URL du panneau publicitaire ('' = aucun panneau affiché côté joueur/agent)
   bgImage: '', // URL de la photo de fond personnalisée ('' = filigrane logo par défaut)
   topbarBgImage: '', // URL de la photo dédiée à la barre du haut ('' = dégradé du thème actif)
   logo: '', // URL du logo personnalisé ('' = frontend/logo.png par défaut)
@@ -642,6 +643,18 @@ function renderSettingsSection() {
       ${state.blueColor ? `<button class="secondary" id="blue-color-reset-btn" type="button">Réinitialiser (revenir au bleu du thème)</button>` : ''}
     </div>
     <div class="card">
+      <h2>📢 Panneau publicitaire</h2>
+      <p style="font-size:13px;">Image au format portrait (idéalement 9:16, ex. 1080×1920) affichée en surimpression une fois par session au joueur ET à l'agent — un bouton (x) permet de la fermer. Aucun lien cliquable, purement visuel : à utiliser pour promouvoir un avantage de l'app (VIP, parrainage...) ou une entreprise tierce. Remplaçable à tout moment ; sans image ici, aucun panneau ne s'affiche.</p>
+      ${state.adImage ? `
+        <div style="display:flex; justify-content:center; margin-bottom:12px;">
+          <img src="${state.adImage}" alt="Aperçu du panneau publicitaire" style="width:140px; aspect-ratio:9/16; object-fit:cover; border-radius:10px;">
+        </div>
+      ` : `<p style="font-size:13px; color:var(--muted);">Aucun panneau configuré — rien ne s'affiche pour l'instant côté joueur/agent.</p>`}
+      <input type="file" id="ad-image-input" accept="image/png,image/jpeg,image/webp" style="margin-bottom:12px;">
+      <button class="primary" id="ad-image-apply-btn" type="button">Envoyer et appliquer</button>
+      ${state.adImage ? `<button class="secondary" id="ad-image-reset-btn" type="button">Retirer (plus aucun panneau affiché)</button>` : ''}
+    </div>
+    <div class="card">
       <h2>🖼️ Photo de fond personnalisée</h2>
       <p style="font-size:13px;">Remplace le filigrane du logo par une photo en plein écran, indépendamment du thème et de la couleur de fond ci-dessus. L'image est automatiquement redimensionnée avant l'envoi (max 3 Mo côté serveur). S'applique immédiatement pour tout le monde.</p>
       ${state.bgImage ? `
@@ -761,11 +774,12 @@ async function loadRevenue() {
 async function loadContactSettings() {
   setState({ loading: true, error: '' });
   try {
-    const [contact, theme] = await Promise.all([
+    const [contact, theme, ad] = await Promise.all([
       api('/admin/settings/contact-whatsapp'),
-      api('/admin/settings/theme')
+      api('/admin/settings/theme'),
+      api('/ad')
     ]);
-    setState({ contactWhatsapp: contact.whatsappNumber, currentTheme: theme.theme, bgColor: theme.bgColor || '', blueColor: theme.blueColor || '', bgImage: theme.bgImage || '', topbarBgImage: theme.topbarBgImage || '', logo: theme.logo || '', loading: false });
+    setState({ contactWhatsapp: contact.whatsappNumber, currentTheme: theme.theme, bgColor: theme.bgColor || '', blueColor: theme.blueColor || '', bgImage: theme.bgImage || '', topbarBgImage: theme.topbarBgImage || '', logo: theme.logo || '', adImage: ad.adImage || '', loading: false });
   } catch (err) {
     if (err.status === 401) { logout(); return; }
     setState({ error: err.message, loading: false });
@@ -959,6 +973,35 @@ function bind() {
         const data = await api('/admin/settings/blue-color', { method: 'POST', body: { blueColor: '' } });
         applyThemeVars(state.currentTheme, state.bgColor, '');
         setState({ blueColor: '', success: data.message, error: '' });
+      } catch (err) {
+        setState({ error: err.message });
+      }
+    });
+  }
+  const adImageApplyBtn = document.getElementById('ad-image-apply-btn');
+  if (adImageApplyBtn) {
+    adImageApplyBtn.addEventListener('click', async () => {
+      const fileInput = document.getElementById('ad-image-input');
+      const file = fileInput?.files?.[0];
+      if (!file) { setState({ error: 'Choisissez d\'abord une image.' }); return; }
+      setState({ loading: true, error: '' });
+      try {
+        // Redimensionnement "photo" (resizeImageForBg) — pas resizeImageForLogo, qui
+        // préserve la transparence PNG mais ne convient pas à une image publicitaire.
+        const imageDataUrl = await resizeImageForBg(file, 1600, 0.85);
+        const data = await api('/admin/settings/ad', { method: 'POST', body: { imageDataUrl } });
+        setState({ adImage: data.adImage, success: data.message, error: '', loading: false });
+      } catch (err) {
+        setState({ error: err.message, loading: false });
+      }
+    });
+  }
+  const adImageResetBtn = document.getElementById('ad-image-reset-btn');
+  if (adImageResetBtn) {
+    adImageResetBtn.addEventListener('click', async () => {
+      try {
+        const data = await api('/admin/settings/ad', { method: 'POST', body: { imageDataUrl: '' } });
+        setState({ adImage: '', success: data.message, error: '' });
       } catch (err) {
         setState({ error: err.message });
       }

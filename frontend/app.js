@@ -268,6 +268,48 @@ async function applyThemeFromServer() {
 }
 applyThemeFromServer();
 
+// Panneau publicitaire (juillet 2026, voir /admin.html → Réglages) — image au format
+// portrait affichée une fois par session (joueur ET agent), fermable via un bouton (x).
+// "Une fois par session" est interprété ici comme "une fois par chargement de page" :
+// adShown repasse à false à chaque rechargement/nouvelle connexion, mais ne redéclenche
+// jamais l'affichage tant que la page reste ouverte (changer d'onglet dans l'app,
+// terminer une partie, etc. ne le fait pas réapparaître).
+let adImageUrl = '';
+let adShown = false;
+
+async function applyAdFromServer() {
+  try {
+    const res = await fetch('/api/ad');
+    const data = await res.json();
+    adImageUrl = data.adImage || '';
+  } catch {
+    // Hors ligne ou erreur réseau : pas de panneau ce coup-ci, rien de grave.
+  }
+}
+applyAdFromServer();
+
+// Insère le panneau publicitaire dans #app si une image est configurée et qu'il n'a pas
+// déjà été montré cette session — appelée à la fin de render() (joueur ET agent, voir
+// plus bas), jamais depuis applyAdFromServer() directement pour éviter d'agir avant que
+// #app ait un premier contenu.
+function renderAdOverlayIfNeeded() {
+  if (!adImageUrl || adShown) return;
+  adShown = true;
+  APP.insertAdjacentHTML('beforeend', `
+    <div class="ad-overlay" id="ad-overlay">
+      <div class="ad-panel">
+        <button type="button" class="ad-close" id="ad-close-btn" aria-label="Fermer la publicité">✕</button>
+        <img src="${adImageUrl}" alt="Publicité" class="ad-image">
+      </div>
+    </div>
+  `);
+  const overlay = document.getElementById('ad-overlay');
+  const closeBtn = document.getElementById('ad-close-btn');
+  if (closeBtn && overlay) {
+    closeBtn.addEventListener('click', () => overlay.remove());
+  }
+}
+
 // Names, referral notes, etc. can contain arbitrary text chosen by other users
 // (e.g. a leaderboard entry, or "Parrainage de X" in a referrer's transaction history).
 // Always escape before inserting into innerHTML to prevent stored XSS.
@@ -448,6 +490,7 @@ function render() {
   if (state.isAgent) {
     APP.innerHTML = renderAgentShell();
     bindAgentShellEvents();
+    renderAdOverlayIfNeeded();
     return;
   }
 
@@ -490,6 +533,8 @@ function render() {
   if ((state.view === 'trivia' || state.view === 'puzzle') && state.game && !state.game.result && state.game.deadlineAt) {
     startGameTimerTick();
   }
+
+  renderAdOverlayIfNeeded();
 }
 
 function tabBtn(view, icon, label) {
@@ -821,7 +866,7 @@ function renderHome() {
     ${state.error ? `<div class="error-banner">${state.error}</div>` : ''}
     <div class="card">
       <h2>Bonjour ${escapeHtml(state.user?.name ?? '')} 👋</h2>
-      <p>Jouez chaque jour pour gagner des points, grimper au classement et les retirer en espèces chez notre agent.</p>
+      <p>Jouez chaque jour pour gagner des points, grimper au classement et les retirer en espèces chez l'un de nos Agents sur tout le territoire national.</p>
       ${bonusPlays > 0 ? `<p style="font-size:18px; font-weight:800; color:var(--game-contrast);">🎟️ <strong>${bonusPlays}</strong> partie(s) bonus disponible(s) (au-delà de la limite gratuite du jour).</p>` : ''}
     </div>
     ${dc ? (dc.completedToday ? `
@@ -856,7 +901,7 @@ function renderHome() {
       <h2>Comment ça marche</h2>
       <p>1. Jouez à un jeu d'habileté (10 parties gratuites/jour et par jeu).</p>
       <p>2. Gagnez des points selon vos bonnes réponses.</p>
-      <p>3. Cumulez et demandez un retrait en espèces chez notre agent.</p>
+      <p>3. Cumulez et demandez un retrait en espèces chez l'un de nos Agents sur tout le territoire national.</p>
       <p>4. Plus de parties gratuites aujourd'hui ? Déposez chez l'agent pour des parties bonus (onglet Portefeuille) — cet argent achète des parties, il n'est pas retirable.</p>
       <p>5. Avant chaque partie, vous pouvez miser entre 100 et 2500 de vos points : score quasi parfait, la mise augmente jusqu'à 10% ; score faible, elle peut diminuer jusqu'à 75%. Optionnel — vous pouvez toujours jouer sans miser.</p>
       <p>6. Chaque partie est chronométrée (25 secondes) : le temps s'affiche pendant que vous jouez. Si le temps s'écoule avant la fin, la partie est perdue (0 point) et une mise éventuelle perd 50% — répondez avant la fin du compte à rebours !</p>
