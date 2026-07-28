@@ -55,9 +55,40 @@ La confirmation par WhatsApp dépend d'une personne qui surveille activement `OP
 
 Chaque fois que vous voulez déployer une modification du code : commitez et poussez sur GitHub (`git add -A && git commit -m "..." && git push`) — Render redéploie automatiquement à chaque push sur la branche `main`. Pas de commande spéciale à lancer sur Render.
 
-## Nom de domaine personnalisé (optionnel)
+## Nom de domaine personnalisé — konkouapp.com (Namecheap)
 
-Si vous avez un nom de domaine (ex. `konkou.ht` ou `konkou.com`), Render permet de le connecter dans l'onglet **"Settings" → "Custom Domains"** du service, avec un certificat HTTPS généré automatiquement. Pas indispensable pour commencer — l'URL `.onrender.com` fonctionne très bien pour tester.
+Le domaine `konkouapp.com` a été acheté chez Namecheap. Voici la marche à suivre pour le connecter au service Render `konkou`, avec un certificat HTTPS généré automatiquement par Render. Comptez quelques minutes à quelques heures pour la propagation DNS après ces réglages.
+
+### Étape A — Ajouter le domaine côté Render
+
+1. Dans le [tableau de bord Render](https://dashboard.render.com), ouvrez le service `konkou`.
+2. Onglet **"Settings"**, faites défiler jusqu'à la section **"Custom Domains"**.
+3. Cliquez **"+ Add Custom Domain"** et entrez `konkouapp.com` (le domaine racine, sans `www`). Cliquez **"Save"**.
+4. Render ajoute automatiquement `www.konkouapp.com` en redirection vers `konkouapp.com`. Le domaine apparaît avec le statut "DNS update needed" — c'est normal, l'étape B ci-dessous s'en occupe.
+
+### Étape B — Configurer le DNS côté Namecheap
+
+1. Connectez-vous sur [namecheap.com](https://namecheap.com), allez dans **"Domain List"**, cliquez **"Manage"** à côté de `konkouapp.com`, puis l'onglet **"Advanced DNS"**.
+2. **Supprimez toute entrée `AAAA`** existante si présente — elle pointe vers une adresse IPv6, que Render ne supporte pas, et peut bloquer la vérification.
+3. **Enregistrement racine** : supprimez l'entrée `A` existante pour l'hôte `@`, puis ajoutez-en une nouvelle :
+   - Type : `A Record`
+   - Host : `@`
+   - Value : `216.24.57.1` (adresse du load balancer Render)
+   - TTL : `1 min` (le plus court possible, pour accélérer la vérification)
+4. **Enregistrement www** : supprimez toute entrée `CNAME` ou redirection existante pour l'hôte `www`, puis ajoutez :
+   - Type : `CNAME Record`
+   - Host : `www`
+   - Value : `konkou.onrender.com` (le sous-domaine exact du service, visible en haut du tableau de bord Render — à vérifier au cas où il diffère)
+   - TTL : `1 min`
+
+### Étape C — Vérifier et tester
+
+1. Revenez sur Render, section **"Custom Domains"**, cliquez **"Verify"** à côté de `konkouapp.com`.
+2. Si la vérification échoue, patientez quelques minutes (le temps que le changement DNS se propage) et réessayez.
+3. Une fois vérifié, Render génère automatiquement le certificat TLS (HTTPS) — ça peut prendre quelques minutes de plus.
+4. Ouvrez `https://konkouapp.com` dans un navigateur. Un "502 Bad Gateway" passager juste après la vérification est normal, le temps que Render mette à jour son routage — réessayez après quelques minutes.
+
+Pas indispensable pour commencer : l'URL `.onrender.com` fonctionne très bien en attendant.
 
 ## Un doute pendant le déploiement ?
 
