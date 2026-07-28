@@ -620,6 +620,12 @@ const server = http.createServer(async (req, res) => {
       return sendJson(res, status, data);
     }
 
+    if (pathname === '/api/admin/settings/card-color' && method === 'POST') {
+      if (!requireAdmin(req, res)) return;
+      const { status, data } = themeRoutes.setCardColor(body);
+      return sendJson(res, status, data);
+    }
+
     if (pathname === '/api/admin/settings/ad' && method === 'POST') {
       if (!requireAdmin(req, res)) return;
       const { status, data } = adsRoutes.setAd(body);

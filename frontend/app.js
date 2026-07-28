@@ -109,7 +109,7 @@ function darkenHex(hex, factor) {
   return `#${channel(16)}${channel(8)}${channel(0)}`;
 }
 
-function applyThemeVars(themeKey, bgColor, blueColor) {
+function applyThemeVars(themeKey, bgColor, blueColor, cardColor) {
   const theme = THEMES[themeKey] || THEMES.default;
   const root = document.documentElement.style;
   // Réinitialise d'abord aux valeurs par défaut (celles de :root dans styles.css) avant
@@ -128,7 +128,18 @@ function applyThemeVars(themeKey, bgColor, blueColor) {
     root.setProperty('--blue', blueColor);
     root.setProperty('--blue-2', darkenHex(blueColor, 0.55));
   }
+  // Couleur des cartes personnalisée (admin, indépendante du thème actif) — surcharge
+  // --card (fond des .card/.tabbar/.ad-panel) ; --card-2 (fond des .tile/.choice-btn, et
+  // 2e ton du dégradé des .game-panel) est dérivée en assombrissant légèrement la même
+  // couleur (facteur doux, contrairement à --blue-2, pour rester subtil même si la
+  // couleur choisie est déjà pâle). Le texte affiché sur ce fond (--card-text/
+  // --card-muted, voir updateCardContrastColor ci-dessous) est recalculé juste après.
+  if (cardColor) {
+    root.setProperty('--card', cardColor);
+    root.setProperty('--card-2', darkenHex(cardColor, 0.9));
+  }
   updateGameContrastColor();
+  updateCardContrastColor();
 }
 
 // Convertit une couleur CSS ("#rgb", "#rrggbb", "rgb(r, g, b)" — ce que renvoie
@@ -168,6 +179,44 @@ function updateGameContrastColor() {
   document.documentElement.style.setProperty('--game-contrast', isLight ? '#d21034' : '#ffffff');
 }
 updateGameContrastColor(); // valeur initiale avant même la réponse de /api/theme
+
+// Convertit une couleur hex ("#rrggbb") en chaîne "rgba(r, g, b, alpha)" — utilisé pour
+// une version adoucie (texte secondaire) de la couleur de texte adaptative des cartes,
+// sans avoir à maintenir une deuxième couleur hex à part.
+function hexToRgbaString(hex, alpha) {
+  const rgb = parseColorToRgb(hex);
+  if (!rgb) return hex;
+  return `rgba(${rgb[0]}, ${rgb[1]}, ${rgb[2]}, ${alpha})`;
+}
+
+// Texte des cartes (--card-text/--card-muted, voir .card/.tile/.game-panel/.choice-btn/
+// .tabbar dans styles.css) : s'adapte à la couleur de fond des cartes actuellement
+// appliquée (--card — thème saisonnier ou couleur personnalisée par l'admin), comme
+// demandé — blanc si le fond est foncé. Si le fond est pâle, rouge ou bleu (les deux
+// couleurs de marque) : lequel des deux est choisi, PAS via le ratio de contraste WCAG
+// (celui-ci ne dépend que de la luminosité, pas de la teinte — --blue étant nettement plus
+// sombre que --red, il "gagnerait" quasiment à chaque fois sur un fond pâle, rendant le
+// choix rouge/bleu sans intérêt). On compare plutôt la teinte du fond lui-même : un fond
+// pâle à dominante rouge/chaude (canal rouge ≥ canal bleu) prend un texte bleu, un fond
+// pâle à dominante bleue/froide prend un texte rouge — pour que le texte se détache
+// visuellement du fond plutôt que de s'y fondre en dégradé de la même couleur, même si les
+// deux restent techniquement lisibles au sens du contraste de luminosité seul.
+function updateCardContrastColor() {
+  const raw = getComputedStyle(document.documentElement).getPropertyValue('--card');
+  const rgb = parseColorToRgb(raw);
+  const root = document.documentElement.style;
+  if (!rgb) { root.removeProperty('--card-text'); root.removeProperty('--card-muted'); return; }
+  const isLight = relativeLuminance(rgb) > 0.5;
+  if (isLight) {
+    const pick = rgb[0] >= rgb[2] ? '#00209f' : '#d21034';
+    root.setProperty('--card-text', pick);
+    root.setProperty('--card-muted', hexToRgbaString(pick, 0.72));
+  } else {
+    root.setProperty('--card-text', '#ffffff');
+    root.setProperty('--card-muted', 'rgba(255, 255, 255, 0.68)');
+  }
+}
+updateCardContrastColor(); // valeur initiale avant même la réponse de /api/theme
 
 function applyThemeParticles(themeKey) {
   const theme = THEMES[themeKey] || THEMES.default;
@@ -257,7 +306,7 @@ async function applyThemeFromServer() {
   try {
     const res = await fetch('/api/theme');
     const data = await res.json();
-    applyThemeVars(data.theme, data.bgColor, data.blueColor);
+    applyThemeVars(data.theme, data.bgColor, data.blueColor, data.cardColor);
     applyThemeParticles(data.theme);
     applyBgImage(data.bgImage);
     applyTopbarBgImage(data.topbarBgImage);

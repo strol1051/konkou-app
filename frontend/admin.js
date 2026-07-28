@@ -84,7 +84,7 @@ function darkenHex(hex, factor) {
   return `#${channel(16)}${channel(8)}${channel(0)}`;
 }
 
-function applyThemeVars(themeKey, bgColor, blueColor) {
+function applyThemeVars(themeKey, bgColor, blueColor, cardColor) {
   const theme = THEMES[themeKey] || THEMES.default;
   const root = document.documentElement.style;
   ['--blue', '--blue-2', '--red', '--bg', '--card', '--card-2'].forEach(v => root.removeProperty(v));
@@ -97,7 +97,65 @@ function applyThemeVars(themeKey, bgColor, blueColor) {
     root.setProperty('--blue', blueColor);
     root.setProperty('--blue-2', darkenHex(blueColor, 0.55));
   }
+  // Couleur des cartes personnalisée (indépendante du thème) — surcharge --card ; --card-2
+  // dérivée automatiquement (léger assombrissement) — voir app.js pour la documentation
+  // complète, y compris le calcul du texte adaptatif (--card-text/--card-muted).
+  if (cardColor) {
+    root.setProperty('--card', cardColor);
+    root.setProperty('--card-2', darkenHex(cardColor, 0.9));
+  }
+  updateCardContrastColor();
 }
+
+// Convertit une couleur CSS ("#rgb", "#rrggbb", "rgb(r, g, b)") en triplet [r, g, b], ou
+// null — voir app.js pour la documentation complète (même fonction, dupliquée ici).
+function parseColorToRgb(str) {
+  const s = String(str || '').trim();
+  let m = s.match(/^#([0-9a-f]{3})$/i);
+  if (m) return m[1].split('').map(c => parseInt(c + c, 16));
+  m = s.match(/^#([0-9a-f]{6})$/i);
+  if (m) return [m[1].slice(0, 2), m[1].slice(2, 4), m[1].slice(4, 6)].map(h => parseInt(h, 16));
+  m = s.match(/^rgba?\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)/i);
+  if (m) return [parseInt(m[1], 10), parseInt(m[2], 10), parseInt(m[3], 10)];
+  return null;
+}
+
+// Luminance relative standard (WCAG) — voir app.js pour la documentation complète.
+function relativeLuminance([r, g, b]) {
+  const srgb = [r, g, b].map(v => {
+    const c = v / 255;
+    return c <= 0.03928 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4);
+  });
+  return 0.2126 * srgb[0] + 0.7152 * srgb[1] + 0.0722 * srgb[2];
+}
+
+// Convertit un hex en "rgba(r, g, b, alpha)" — voir app.js pour la documentation complète.
+function hexToRgbaString(hex, alpha) {
+  const rgb = parseColorToRgb(hex);
+  if (!rgb) return hex;
+  return `rgba(${rgb[0]}, ${rgb[1]}, ${rgb[2]}, ${alpha})`;
+}
+
+// Texte des cartes adaptatif (--card-text/--card-muted) — voir app.js pour la
+// documentation complète (même logique, dupliquée ici).
+function updateCardContrastColor() {
+  const raw = getComputedStyle(document.documentElement).getPropertyValue('--card');
+  const rgb = parseColorToRgb(raw);
+  const root = document.documentElement.style;
+  if (!rgb) { root.removeProperty('--card-text'); root.removeProperty('--card-muted'); return; }
+  // Choix rouge/bleu basé sur la teinte du fond, pas le ratio de contraste WCAG — voir
+  // app.js pour la documentation complète (même logique, dupliquée ici).
+  const isLight = relativeLuminance(rgb) > 0.5;
+  if (isLight) {
+    const pick = rgb[0] >= rgb[2] ? '#00209f' : '#d21034';
+    root.setProperty('--card-text', pick);
+    root.setProperty('--card-muted', hexToRgbaString(pick, 0.72));
+  } else {
+    root.setProperty('--card-text', '#ffffff');
+    root.setProperty('--card-muted', 'rgba(255, 255, 255, 0.68)');
+  }
+}
+updateCardContrastColor(); // valeur initiale avant même la réponse de /api/theme
 
 function applyThemeParticles(themeKey) {
   const theme = THEMES[themeKey] || THEMES.default;
@@ -164,7 +222,7 @@ async function applyThemeFromServer() {
   try {
     const res = await fetch('/api/theme');
     const data = await res.json();
-    applyThemeVars(data.theme, data.bgColor, data.blueColor);
+    applyThemeVars(data.theme, data.bgColor, data.blueColor, data.cardColor);
     applyThemeParticles(data.theme);
     applyBgImage(data.bgImage);
     applyTopbarBgImage(data.topbarBgImage);
@@ -256,6 +314,7 @@ const state = {
   currentTheme: 'default', // thème saisonnier actif (voir THEMES plus haut)
   bgColor: '', // couleur de fond personnalisée ('' = pas de surcharge, fond du thème actif)
   blueColor: '', // couleur bleu foncé personnalisée ('' = pas de surcharge, bleu du thème actif)
+  cardColor: '', // couleur des cartes personnalisée ('' = pas de surcharge, couleur du thème actif)
   adImage: '', // URL du panneau publicitaire ('' = aucun panneau affiché côté joueur/agent)
   bgImage: '', // URL de la photo de fond personnalisée ('' = filigrane logo par défaut)
   topbarBgImage: '', // URL de la photo dédiée à la barre du haut ('' = dégradé du thème actif)
@@ -709,6 +768,18 @@ function renderSettingsSection() {
       ${state.blueColor ? `<button class="secondary" id="blue-color-reset-btn" type="button">Réinitialiser (revenir au bleu du thème)</button>` : ''}
     </div>
     <div class="card">
+      <h2>🃏 Couleur des cartes</h2>
+      <p style="font-size:13px;">Indépendante des thèmes ci-dessus — remplace la couleur de fond des cartes/onglets/panneaux de jeu (l'accueil, le classement, le portefeuille, le profil...), sans toucher au reste des couleurs du thème actif. Une seule couleur à choisir : le second ton (fond des onglets/boutons de réponse) est calculé automatiquement. Le texte affiché sur ces cartes s'adapte automatiquement pour rester lisible : <strong>blanc</strong> si la couleur choisie est foncée, <strong>rouge ou bleu</strong> (celui qui ressort le mieux) si elle est pâle. S'applique immédiatement pour tout le monde.</p>
+      <p style="font-size:13px; color:var(--muted);">
+        ${state.cardColor ? `Couleur actuelle : <strong style="color:var(--text);">${escapeHtml(state.cardColor)}</strong>` : "Aucune surcharge — l'app utilise la couleur de carte par défaut du thème actif."}
+      </p>
+      <div style="display:flex; gap:10px; align-items:center; margin-bottom:12px;">
+        <input type="color" id="card-color-input" value="${state.cardColor || THEMES[state.currentTheme]?.vars['--card'] || '#141d33'}" style="width:56px; height:44px; padding:2px; margin-bottom:0; cursor:pointer;">
+        <button class="primary" id="card-color-apply-btn" type="button" style="flex:1; margin:0;">Appliquer</button>
+      </div>
+      ${state.cardColor ? `<button class="secondary" id="card-color-reset-btn" type="button">Réinitialiser (revenir à la couleur du thème)</button>` : ''}
+    </div>
+    <div class="card">
       <h2>📢 Panneau publicitaire</h2>
       <p style="font-size:13px;">Image au format portrait (idéalement 9:16, ex. 1080×1920) affichée en surimpression une fois par session au joueur ET à l'agent — un bouton (x) permet de la fermer. Aucun lien cliquable, purement visuel : à utiliser pour promouvoir un avantage de l'app (VIP, parrainage...) ou une entreprise tierce. Remplaçable à tout moment ; sans image ici, aucun panneau ne s'affiche.</p>
       ${state.adImage ? `
@@ -861,7 +932,7 @@ async function loadContactSettings() {
       api('/admin/settings/theme'),
       api('/ad')
     ]);
-    setState({ contactWhatsapp: contact.whatsappNumber, currentTheme: theme.theme, bgColor: theme.bgColor || '', blueColor: theme.blueColor || '', bgImage: theme.bgImage || '', topbarBgImage: theme.topbarBgImage || '', logo: theme.logo || '', adImage: ad.adImage || '', loading: false });
+    setState({ contactWhatsapp: contact.whatsappNumber, currentTheme: theme.theme, bgColor: theme.bgColor || '', blueColor: theme.blueColor || '', cardColor: theme.cardColor || '', bgImage: theme.bgImage || '', topbarBgImage: theme.topbarBgImage || '', logo: theme.logo || '', adImage: ad.adImage || '', loading: false });
   } catch (err) {
     if (err.status === 401) { logout(); return; }
     setState({ error: err.message, loading: false });
@@ -1021,7 +1092,7 @@ function bind() {
       const theme = btn.dataset.themePick;
       try {
         const data = await api('/admin/settings/theme', { method: 'POST', body: { theme } });
-        applyThemeVars(data.theme, state.bgColor, state.blueColor);
+        applyThemeVars(data.theme, state.bgColor, state.blueColor, state.cardColor);
         applyThemeParticles(data.theme);
         setState({ currentTheme: data.theme, success: data.message, error: '' });
       } catch (err) {
@@ -1035,7 +1106,7 @@ function bind() {
       const bgColor = document.getElementById('bg-color-input').value;
       try {
         const data = await api('/admin/settings/bg-color', { method: 'POST', body: { bgColor } });
-        applyThemeVars(state.currentTheme, data.bgColor, state.blueColor);
+        applyThemeVars(state.currentTheme, data.bgColor, state.blueColor, state.cardColor);
         setState({ bgColor: data.bgColor, success: data.message, error: '' });
       } catch (err) {
         setState({ error: err.message });
@@ -1047,7 +1118,7 @@ function bind() {
     bgColorResetBtn.addEventListener('click', async () => {
       try {
         const data = await api('/admin/settings/bg-color', { method: 'POST', body: { bgColor: '' } });
-        applyThemeVars(state.currentTheme, '', state.blueColor);
+        applyThemeVars(state.currentTheme, '', state.blueColor, state.cardColor);
         setState({ bgColor: '', success: data.message, error: '' });
       } catch (err) {
         setState({ error: err.message });
@@ -1060,7 +1131,7 @@ function bind() {
       const blueColor = document.getElementById('blue-color-input').value;
       try {
         const data = await api('/admin/settings/blue-color', { method: 'POST', body: { blueColor } });
-        applyThemeVars(state.currentTheme, state.bgColor, data.blueColor);
+        applyThemeVars(state.currentTheme, state.bgColor, data.blueColor, state.cardColor);
         setState({ blueColor: data.blueColor, success: data.message, error: '' });
       } catch (err) {
         setState({ error: err.message });
@@ -1072,8 +1143,34 @@ function bind() {
     blueColorResetBtn.addEventListener('click', async () => {
       try {
         const data = await api('/admin/settings/blue-color', { method: 'POST', body: { blueColor: '' } });
-        applyThemeVars(state.currentTheme, state.bgColor, '');
+        applyThemeVars(state.currentTheme, state.bgColor, '', state.cardColor);
         setState({ blueColor: '', success: data.message, error: '' });
+      } catch (err) {
+        setState({ error: err.message });
+      }
+    });
+  }
+
+  const cardColorApplyBtn = document.getElementById('card-color-apply-btn');
+  if (cardColorApplyBtn) {
+    cardColorApplyBtn.addEventListener('click', async () => {
+      const cardColor = document.getElementById('card-color-input').value;
+      try {
+        const data = await api('/admin/settings/card-color', { method: 'POST', body: { cardColor } });
+        applyThemeVars(state.currentTheme, state.bgColor, state.blueColor, data.cardColor);
+        setState({ cardColor: data.cardColor, success: data.message, error: '' });
+      } catch (err) {
+        setState({ error: err.message });
+      }
+    });
+  }
+  const cardColorResetBtn = document.getElementById('card-color-reset-btn');
+  if (cardColorResetBtn) {
+    cardColorResetBtn.addEventListener('click', async () => {
+      try {
+        const data = await api('/admin/settings/card-color', { method: 'POST', body: { cardColor: '' } });
+        applyThemeVars(state.currentTheme, state.bgColor, state.blueColor, '');
+        setState({ cardColor: '', success: data.message, error: '' });
       } catch (err) {
         setState({ error: err.message });
       }

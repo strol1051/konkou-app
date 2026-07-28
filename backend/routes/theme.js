@@ -6,6 +6,7 @@ import { DATA_DIR } from '../db.js';
 const SETTING_KEY = 'app_theme';
 const BG_SETTING_KEY = 'app_bg_color';
 const BLUE_SETTING_KEY = 'app_blue_color';
+const CARD_SETTING_KEY = 'app_card_color';
 const BG_IMAGE_SETTING_KEY = 'app_bg_image';
 const TOPBAR_BG_IMAGE_SETTING_KEY = 'app_topbar_bg_image';
 const LOGO_SETTING_KEY = 'app_logo';
@@ -82,6 +83,7 @@ export function getTheme() {
       theme: getSetting(SETTING_KEY, DEFAULT_THEME),
       bgColor: getSetting(BG_SETTING_KEY, ''), // '' = pas de surcharge, on garde le fond du thème
       blueColor: getSetting(BLUE_SETTING_KEY, ''), // '' = pas de surcharge, on garde le bleu du thème
+      cardColor: getSetting(CARD_SETTING_KEY, ''), // '' = pas de surcharge, on garde le fond de carte du thème
       bgImage: getSetting(BG_IMAGE_SETTING_KEY, ''), // '' = pas de photo de fond personnalisée
       topbarBgImage: getSetting(TOPBAR_BG_IMAGE_SETTING_KEY, ''), // '' = pas de photo dans la barre du haut, juste le dégradé du thème
       logo: getSetting(LOGO_SETTING_KEY, '') // '' = logo.png par défaut (fichier livré avec l'app)
@@ -139,6 +141,27 @@ export function setBlueColor(body) {
   return {
     status: 200,
     data: { message: blueColor ? 'Couleur bleu foncé mise à jour.' : 'Couleur bleu foncé réinitialisée (bleu du thème par défaut).', blueColor }
+  };
+}
+
+// Couleur des cartes personnalisée (juillet 2026), indépendante du thème saisonnier —
+// surcharge --card (fond des cartes/onglets/panneaux de jeu) pour n'importe quel thème
+// actif, exactement comme setBgColor/setBlueColor ci-dessus. --card-2 (2e ton du dégradé
+// des .game-panel, fond des .tile/.choice-btn) est dérivée automatiquement de cette même
+// couleur (voir darkenHex() dans app.js/admin.js), pour ne demander qu'UNE seule couleur à
+// l'admin. Le frontend calcule aussi automatiquement la couleur du texte affiché sur ce
+// fond (--card-text/--card-muted) : blanc si la couleur choisie est foncée, rouge ou bleu
+// (celui offrant le meilleur contraste) si elle est pâle — voir updateCardContrastColor()
+// dans app.js/admin.js. Un body vide/absent efface la surcharge.
+export function setCardColor(body) {
+  const cardColor = body?.cardColor ?? '';
+  if (cardColor !== '' && !HEX_COLOR_RE.test(cardColor)) {
+    return { status: 400, data: { error: 'Couleur invalide — utilisez un format hexadécimal du type #141d33' } };
+  }
+  setSetting(CARD_SETTING_KEY, cardColor);
+  return {
+    status: 200,
+    data: { message: cardColor ? 'Couleur des cartes mise à jour.' : 'Couleur des cartes réinitialisée (couleur du thème par défaut).', cardColor }
   };
 }
 

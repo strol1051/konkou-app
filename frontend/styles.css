@@ -25,6 +25,14 @@
      que l'habillage "futuriste" ne clignote pas d'une couleur à l'autre à chaque thème).
   */
   --accent-glow: #26d6ff;
+  /* Texte adaptatif des cartes (juillet 2026, voir updateCardContrastColor() dans
+     app.js/admin.js) — par défaut, identiques à --text/--muted (donc AUCUN changement
+     visuel tant que l'admin n'a pas personnalisé la couleur des cartes dans Réglages).
+     Une fois une couleur de carte personnalisée choisie, ces deux variables sont
+     recalculées en JS pour rester lisibles dessus : blanc si la couleur est foncée,
+     rouge ou bleu (celui qui contraste le mieux) si elle est pâle. */
+  --card-text: var(--text);
+  --card-muted: var(--muted);
 }
 
 * { box-sizing: border-box; }
@@ -99,6 +107,7 @@ body {
 
 .card {
   background: var(--card);
+  color: var(--card-text);
   border-radius: var(--radius);
   padding: 18px;
   margin-bottom: 16px;
@@ -111,7 +120,7 @@ body {
 }
 
 .card p {
-  color: var(--muted);
+  color: var(--card-muted);
   font-size: 14px;
   line-height: 1.5;
   margin: 4px 0;
@@ -130,7 +139,7 @@ body {
   text-align: center;
   cursor: pointer;
   border: none;
-  color: var(--text);
+  color: var(--card-text);
   font-size: 15px;
   font-weight: 600;
 }
@@ -165,7 +174,7 @@ body {
   text-align: left;
   cursor: pointer;
   overflow: hidden;
-  color: var(--text);
+  color: var(--card-text);
   box-shadow: 0 0 0 1px rgba(38, 214, 255, 0.1), 0 8px 20px rgba(0, 0, 0, 0.3);
   transition: transform 0.12s ease;
 }
@@ -209,7 +218,7 @@ body {
 
 .game-panel p {
   font-size: 12px;
-  color: var(--muted);
+  color: var(--card-muted);
   margin: 0;
 }
 
@@ -416,7 +425,7 @@ textarea {
   border-radius: 12px;
   border: 1px solid #2a3555;
   background: var(--card-2);
-  color: var(--text);
+  color: var(--card-text);
   font-size: 15px;
   cursor: pointer;
 }
@@ -464,7 +473,7 @@ textarea {
 
 .leader-row .rank {
   width: 28px;
-  color: var(--muted);
+  color: var(--card-muted);
 }
 
 .tabbar {
@@ -484,7 +493,7 @@ textarea {
   flex: 1;
   background: none;
   border: none;
-  color: var(--muted);
+  color: var(--card-muted);
   font-size: 11px;
   padding: 6px 2px;
   display: flex;
