@@ -1607,7 +1607,10 @@ async function renderLeaderboardAsync() {
     content.innerHTML = leaderboardHtml(data);
     bindLeaderboardEvents();
   } catch (err) {
-    setState({ error: err.message });
+    // Voir le commentaire détaillé sur renderAsyncLoadError — même correctif de boucle
+    // infinie qu'au Profil.
+    if (err.status === 401) { logout(); return; }
+    renderAsyncLoadError(err, renderLeaderboardAsync);
   }
 }
 
@@ -1653,7 +1656,10 @@ async function renderWalletAsync() {
     content.innerHTML = walletHtml(data, agentsRes.agents, vip);
     bindWalletEvents(data, agentsRes.agents, vip);
   } catch (err) {
-    setState({ error: err.message });
+    // Voir le commentaire détaillé sur renderAsyncLoadError — même correctif de boucle
+    // infinie qu'au Profil.
+    if (err.status === 401) { logout(); return; }
+    renderAsyncLoadError(err, renderWalletAsync);
   }
 }
 
@@ -1958,6 +1964,33 @@ function bindWalletEvents() {
   }
 }
 
+// Message d'erreur + bouton "Réessayer" affiché à la place du contenu quand le chargement
+// asynchrone d'un écran (Profil/Classement/Portefeuille) échoue — voir renderProfileAsync/
+// renderLeaderboardAsync/renderWalletAsync ci-dessous.
+//
+// CORRECTIF IMPORTANT (juillet 2026) : ces trois écrans appelaient auparavant
+// setState({ error: err.message }) en cas d'échec. Comme setState() déclenche un render()
+// complet, et que renderView() rappelle la fonction synchrone de cet écran (renderProfile,
+// etc.) qui affiche TOUJOURS "Chargement..." puis reprogramme le même appel async — un
+// échec persistant (session expirée/invalide, serveur qui répond une erreur, service qui
+// se réveille après une mise en veille...) créait une boucle infinie et silencieuse : le
+// joueur restait bloqué sur "Chargement du profil..." indéfiniment, sans jamais voir le
+// vrai message d'erreur ni pouvoir réessayer manuellement. Corrigé en mettant à jour
+// #view-content DIRECTEMENT ici (sans repasser par setState()/render()), avec le message
+// d'erreur réel et un bouton pour relancer le chargement à la demande — plus de boucle.
+function renderAsyncLoadError(err, retryFn, containerId = 'view-content') {
+  const content = document.getElementById(containerId);
+  if (!content) return;
+  content.innerHTML = `
+    <div class="card">
+      <p class="error-banner">${escapeHtml(err.message || 'Erreur inconnue')}</p>
+      <button class="secondary" id="async-retry-btn" type="button">🔄 Réessayer</button>
+    </div>
+  `;
+  const btn = document.getElementById('async-retry-btn');
+  if (btn) btn.addEventListener('click', retryFn);
+}
+
 // ---------- PROFILE ----------
 async function renderProfileAsync() {
   try {
@@ -1967,7 +2000,10 @@ async function renderProfileAsync() {
     content.innerHTML = profileHtml(data);
     bindProfileEvents();
   } catch (err) {
-    setState({ error: err.message });
+    // Une session expirée/invalide (401) doit renvoyer à l'écran de connexion plutôt que
+    // d'afficher un bouton "Réessayer" qui échouerait à chaque tentative de toute façon.
+    if (err.status === 401) { logout(); return; }
+    renderAsyncLoadError(err, renderProfileAsync);
   }
 }
 
@@ -2135,7 +2171,12 @@ async function renderAgentMainAsync() {
     content.innerHTML = html;
     bindAgentEvents();
   } catch (err) {
-    setState({ error: err.message });
+    // Même correctif de boucle infinie que renderProfileAsync/renderLeaderboardAsync/
+    // renderWalletAsync (voir renderAsyncLoadError) : bindAgentShellEvents() rappelle
+    // renderAgentMainAsync() à chaque render() tant que state.isAgent est vrai — un
+    // setState({error}) ici redéclencherait indéfiniment le même appel qui échoue.
+    if (err.status === 401) { logout(); return; }
+    renderAsyncLoadError(err, renderAgentMainAsync, 'agent-shell-content');
   }
 }
 

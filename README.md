@@ -572,6 +572,16 @@ Testé de bout en bout (script Node sur base de test jetable) : NatCash/MonCash 
 
 Testé (script Node sur base de test jetable) : vérifications séquentielles sur un quiz normal (chaque appel avance bien à l'index suivant, jamais un second essai sur le même index), même comportement sur le sprint (réponses numériques), fonctionne aussi sur une session de Défi du jour, la notation finale reste identique après avoir utilisé `checkAnswer` sur toutes les questions d'une partie, un jeton de session inexistant et une session appartenant à un autre joueur sont tous deux rejetés (400), et une vérification au-delà du nombre de questions de la partie est refusée (409).
 
+**Boucle infinie "Chargement..." sur Profil/Classement/Portefeuille/Espace Agent (correctif critique, juillet 2026).** Bug signalé en production : un joueur pouvait rester bloqué sur "Chargement du profil..." indéfiniment (constaté après plus d'une heure), sans aucun message d'erreur ni moyen de s'en sortir autrement qu'en rechargeant la page.
+
+Cause : ces quatre écrans (`renderProfile`, `renderLeaderboard`, `renderWallet`, l'Espace Agent) affichent d'abord un texte "Chargement..." puis lancent un appel API en arrière-plan (`setTimeout(..., 0)`). Si cet appel échouait — session invalide/expirée (401), erreur serveur, ou simplement le service qui se réveille après une mise en veille (plan `starter` sur Render) — le gestionnaire d'erreur appelait `setState({ error: ... })`, qui déclenche un `render()` complet. Comme la vue affichée reste la même, `render()` rappelle la fonction qui affiche à nouveau "Chargement..." et relance le même appel qui échoue à nouveau — une boucle infinie et **silencieuse** : le message d'erreur réel n'était jamais affiché (les fonctions de rendu de ces écrans ignorent `state.error`), donc rien ne laissait deviner qu'une erreur se répétait en boucle plutôt qu'un simple chargement lent.
+
+Corrigé sur les quatre écrans concernés (`renderProfileAsync`, `renderLeaderboardAsync`, `renderWalletAsync`, `renderAgentMainAsync`) :
+- Une session invalide/expirée (`err.status === 401`) déclenche désormais directement une déconnexion (`logout()`) vers l'écran de connexion, au lieu de boucler indéfiniment sur un appel qui échouera toujours de la même façon.
+- Toute autre erreur affiche maintenant le message réel (`renderAsyncLoadError()`, nouvelle fonction partagée) avec un bouton "🔄 Réessayer", en mettant à jour le conteneur directement plutôt que de repasser par `setState()`/`render()` — ce qui élimine la boucle pour de bon, quelle que soit la cause de l'échec.
+
+**Si vous êtes bloqué·e sur cet écran maintenant** (avant que ce correctif soit déployé) : déconnectez-vous et reconnectez-vous, ou rechargez complètement la page/l'app — cela suffit à sortir de la boucle immédiatement, aucune donnée n'est perdue.
+
 ## Structure du projet
 
 ```
