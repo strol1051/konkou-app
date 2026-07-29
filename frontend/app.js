@@ -765,13 +765,23 @@ function bindContactEvents(onBack) {
 // après cette autorisation que le joueur/agent choisit son nouveau mot de passe (voir
 // renderSetNewPassword() plus bas). L'ancien champ "nouveau mot de passe" ici — saisi
 // avant toute vérification d'identité — a été retiré pour cette raison.
+//
+// Correctif (juillet 2026) : ce champ utilise désormais phoneField() (préfixe "+509"
+// automatique, comme la connexion/l'inscription/l'inscription agent) au lieu d'un simple
+// <input> texte. Avant ce correctif, l'utilisateur devait taper lui-même "509" en tête de
+// son numéro — un réflexe qu'il n'a nulle part ailleurs dans l'app — et un numéro entré
+// sans ce préfixe ne correspondait à aucun compte en base (les numéros y sont stockés au
+// format complet "509XXXXXXXX"), déclenchant silencieusement la réponse volontairement
+// neutre "Si ce numéro est enregistré..." (anti-énumération, voir forgotPassword() dans
+// routes/auth.js) sans qu'aucune vraie demande ne soit créée — un bug signalé en
+// production qui donnait l'impression que la fonctionnalité entière ne faisait rien.
 function renderForgotRequest() {
   return `
     <div class="card">
       <h2>Mot de passe oublié</h2>
       <p>Entrez votre numéro. Un administrateur autorisera votre demande via WhatsApp, puis vous pourrez choisir votre nouveau mot de passe directement dans l'application.</p>
       <form id="forgot-request-form">
-        <input name="phone" placeholder="Numéro de téléphone" required />
+        ${phoneField('phone')}
         <button class="primary" type="submit">Continuer</button>
       </form>
       <button class="link-btn" id="back-to-login" style="margin-top:14px;">Retour à la connexion</button>
@@ -935,6 +945,10 @@ function bindForgotRequestEvents() {
   document.getElementById('forgot-request-form').addEventListener('submit', async (e) => {
     e.preventDefault();
     const fd = Object.fromEntries(new FormData(e.target).entries());
+    // Voir la note sur phoneField() ci-dessus (renderForgotRequest) : le champ ne contient
+    // que les 8 chiffres locaux, on reconstitue ici le format complet stocké en base, comme
+    // le fait déjà bindAuthEvents() pour la connexion/l'inscription.
+    fd.phone = `509${fd.phone}`;
     try {
       const data = await api('/auth/forgot-password', { method: 'POST', body: fd });
       if (data.code) {
