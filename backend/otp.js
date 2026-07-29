@@ -14,9 +14,22 @@ function generateCode() {
 // Requires OPERATOR_WHATSAPP_NUMBER (E.164 digits, no "+") to be configured — without
 // it, registration/reset requests can still be created but there's no way to complete
 // them, so the frontend should surface a clear error if this comes back null.
+//
+// OPERATOR_NUMBER_RE guards against the most common real-world misconfiguration: an
+// admin deploys via render.yaml (see DEPLOY.md étape 3) and forgets to replace its
+// literal placeholder value "REMPLACER_PAR_VOTRE_NUMERO" with a real number. Without this
+// check, that placeholder string would sail straight through into a wa.me link
+// (https://wa.me/REMPLACER_PAR_VOTRE_NUMERO?text=...) that neither WhatsApp nor the
+// browser can open, leaving every new signup/reset stuck behind a confusing dead link —
+// this exact scenario happened in production (July 2026) before this check was added.
+// Rejecting anything that isn't plain E.164 digits makes buildWhatsappLink() return null
+// the same way it already does for a genuinely empty value, which the frontend already
+// renders as a clear "contactez l'administrateur" message (see renderAwaitingConfirm()
+// dans app.js) instead of a broken button.
+const OPERATOR_NUMBER_RE = /^\d{8,15}$/;
 function buildWhatsappLink(phone, code, message) {
   const operatorNumber = process.env.OPERATOR_WHATSAPP_NUMBER;
-  if (!operatorNumber) return null;
+  if (!operatorNumber || !OPERATOR_NUMBER_RE.test(operatorNumber)) return null;
   const text = `Konkou — ${message} Mon numéro : ${phone}. Mon code : ${code}`;
   return `https://wa.me/${operatorNumber}?text=${encodeURIComponent(text)}`;
 }

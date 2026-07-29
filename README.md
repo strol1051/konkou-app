@@ -512,6 +512,12 @@ Le texte affiché sur ces cartes (`--card-text`/`--card-muted`, appliqué à `.c
 
 Testé (script Node isolant la logique de calcul, sans DOM) : un fond foncé (bleu marine par défaut) donne bien du texte blanc ; un fond pâle rosé/chaud donne du texte bleu, un fond pâle bleuté/froid donne du texte rouge ; la couleur de carte par défaut (non personnalisée) reproduit exactement le rendu blanc existant, donc pas de régression visuelle pour les admins qui n'ont jamais touché ce réglage.
 
+**Lien WhatsApp cassé si `OPERATOR_WHATSAPP_NUMBER` n'est pas configuré correctement (correctif, juillet 2026).** Bug constaté en production : `render.yaml` fixe volontairement `OPERATOR_WHATSAPP_NUMBER` à une valeur d'exemple (`REMPLACER_PAR_VOTRE_NUMERO`) à remplacer manuellement au déploiement (voir `DEPLOY.md`, étape 3) — mais si cette étape est oubliée, `buildWhatsappLink()` (`backend/otp.js`) laissait passer cette valeur telle quelle dans un lien `https://wa.me/REMPLACER_PAR_VOTRE_NUMERO?text=...`, qu'aucun navigateur ni WhatsApp ne peut ouvrir. Résultat concret : tout nouvel inscrit ou toute demande de réinitialisation de mot de passe restait bloqué sur un bouton "Confirmer via WhatsApp" qui ne menait nulle part, sans message d'erreur clair.
+
+Corrigé en ajoutant une validation de format (`OPERATOR_NUMBER_RE`, chiffres E.164 uniquement, 8 à 15 caractères, sans `+`) avant de construire le lien : toute valeur qui n'y correspond pas (placeholder oublié, `+` accidentel, texte quelconque) fait retomber `buildWhatsappLink()` sur `null`, exactement comme lorsque la variable est totalement absente — ce que le frontend savait déjà afficher clairement ("Aucun numéro WhatsApp n'est configuré côté serveur pour le moment — contactez l'administrateur pour activer votre compte manuellement.", voir `renderAwaitingConfirm()` dans `app.js`), mais qui ne se déclenchait jamais dans ce cas précis puisque la variable n'était techniquement pas vide. Testé (script Node) : le placeholder par défaut, une valeur vide, et un numéro avec un `+` superflu donnent tous les trois `whatsappLink: null` sans faire échouer la création du compte/de la demande ; un numéro valide continue de produire un lien correct.
+
+**Rappel important pour tout déploiement** : après avoir suivi `DEPLOY.md`, vérifiez toujours dans Render → service `konkou` → onglet **Environment** que `OPERATOR_WHATSAPP_NUMBER` contient bien un vrai numéro (pas la valeur d'exemple) avant de partager l'app — sans ça, personne ne peut créer de compte.
+
 ## Structure du projet
 
 ```
