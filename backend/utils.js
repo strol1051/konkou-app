@@ -35,6 +35,17 @@ export function verifyPassword(password, stored) {
   return crypto.timingSafeEqual(Buffer.from(hash, 'hex'), Buffer.from(check, 'hex'));
 }
 
+// --- règle de format du mot de passe (juillet 2026) ---
+// Au moins 8 caractères, au moins une majuscule, au moins un chiffre — partagée par
+// l'inscription joueur (routes/auth.js: register, forgotPassword) et l'inscription/
+// réinscription agent (routes/agents.js: registerAgent). Un seul endroit pour cette règle
+// pour ne jamais la faire diverger entre joueur et agent. Ne s'applique PAS au mot de passe
+// Admin (ADMIN_PASSWORD) : ce n'est pas un mot de passe saisi via un formulaire mais une
+// variable d'environnement fixée une fois par l'opérateur au déploiement (voir DEPLOY.md,
+// render.yaml) — cette règle reste alors de la responsabilité de la personne qui déploie.
+export const PASSWORD_RE = /^(?=.*[A-Z])(?=.*\d).{8,}$/;
+export const PASSWORD_REQUIREMENTS_MESSAGE = 'Le mot de passe doit contenir au moins 8 caractères, dont une majuscule et un chiffre';
+
 // --- signed tokens (JWT-like, HMAC-SHA256, no jsonwebtoken dependency needed) ---
 function base64url(input) {
   return Buffer.from(input).toString('base64url');

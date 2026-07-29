@@ -622,7 +622,7 @@ function renderLoginRegister() {
       <form id="auth-form">
         ${!isLogin ? `<input name="name" placeholder="Nom complet" required />` : ''}
         ${phoneField('phone')}
-        ${pwdField('password', 'Mot de passe (min. 6 caractères)')}
+        ${pwdField('password', 'Mot de passe (min. 8 car., 1 majuscule, 1 chiffre)')}
         ${!isLogin ? `<input name="referralCode" placeholder="Code de parrainage (optionnel)" />` : ''}
         <button class="primary" type="submit">${isLogin ? 'Se connecter' : "S'inscrire"}</button>
       </form>
@@ -654,7 +654,7 @@ function renderAgentRegisterForm() {
       <p style="font-size:13px;">Conditions : avoir 18 ans ou plus, fournir une pièce d'identité, déposer 7 500 HTG de capital à notre bureau (10% gardé par Konkou, le reste devient votre crédit à revendre).</p>
       <form id="agent-register-form">
         ${phoneField('phone')}
-        ${pwdField('password', 'Mot de passe (min. 6 caractères)')}
+        ${pwdField('password', 'Mot de passe (min. 8 car., 1 majuscule, 1 chiffre)')}
         <input name="lastName" placeholder="Nom" required />
         <input name="firstName" placeholder="Prénom" required />
         <input name="birthDate" type="date" required />
@@ -717,7 +717,7 @@ function renderForgotRequest() {
       <p>Entrez votre numéro et votre nouveau mot de passe. Vous confirmerez ensuite via WhatsApp pour l'activer.</p>
       <form id="forgot-request-form">
         <input name="phone" placeholder="Numéro de téléphone" required />
-        ${pwdField('newPassword', 'Nouveau mot de passe (min. 6 caractères)')}
+        ${pwdField('newPassword', 'Nouveau mot de passe (min. 8 car., 1 majuscule, 1 chiffre)')}
         <button class="primary" type="submit">Continuer</button>
       </form>
       <button class="link-btn" id="back-to-login" style="margin-top:14px;">Retour à la connexion</button>
@@ -918,17 +918,23 @@ function renderHome() {
       <p>Jouez chaque jour pour gagner des points, grimper au classement et les retirer en espèces chez l'un de nos Agents sur tout le territoire national.</p>
       ${bonusPlays > 0 ? `<p style="font-size:18px; font-weight:800; color:var(--game-contrast);">🎟️ <strong>${bonusPlays}</strong> partie(s) bonus disponible(s) (au-delà de la limite gratuite du jour).</p>` : ''}
     </div>
-    ${dc ? (dc.completedToday ? `
+    ${dc ? (dc.attemptedToday ? (dc.outcome === 'won' ? `
     <div class="card glow-card challenge-done">
       <h2>🎯 Défi du jour</h2>
-      <p style="font-size:13px;">Obtenez au moins <strong>${dc.thresholdPercent}%</strong> de bonnes réponses dans une seule partie (quiz ou sprint) aujourd'hui.</p>
-      <p style="font-size:14px; font-weight:700; color:var(--green); margin:0;">✅ Relevé aujourd'hui par <strong>${escapeHtml(state.user?.name ?? '')}</strong> (${escapeHtml(state.user?.referralCode ?? '')}) — +${dc.rewardPoints} pts crédités</p>
+      <p style="font-size:13px;">Questions très difficiles — au moins <strong>${dc.thresholdPercent}%</strong> de bonnes réponses pour réussir.</p>
+      <p style="font-size:14px; font-weight:700; color:var(--green); margin:0;">✅ Réussi aujourd'hui par <strong>${escapeHtml(state.user?.name ?? '')}</strong> (${escapeHtml(state.user?.referralCode ?? '')}) — +${dc.rewardPoints} pts crédités</p>
     </div>
     ` : `
+    <div class="card glow-card" style="border-left-color: var(--red);">
+      <h2>🎯 Défi du jour</h2>
+      <p style="font-size:13px;">Questions très difficiles — au moins <strong>${dc.thresholdPercent}%</strong> de bonnes réponses pour réussir.</p>
+      <p style="font-size:14px; font-weight:700; color:var(--red); margin:0;">❌ Tentative échouée aujourd'hui — revenez demain.</p>
+    </div>
+    `) : `
     <button type="button" class="card glow-card" id="daily-challenge-card" style="width:100%; text-align:left; cursor:pointer; border:none; font:inherit; color:inherit;">
       <h2>🎯 Défi du jour</h2>
-      <p style="font-size:13px;">Obtenez au moins <strong>${dc.thresholdPercent}%</strong> de bonnes réponses dans une seule partie (quiz ou sprint) aujourd'hui.</p>
-      <p style="font-size:13px; color:var(--muted); margin:0 0 8px;">Pas encore relevé — récompense : <strong>+${dc.rewardPoints} pts</strong></p>
+      <p style="font-size:13px;">Questions très difficiles — au moins <strong>${dc.thresholdPercent}%</strong> de bonnes réponses pour réussir.</p>
+      <p style="font-size:13px; color:var(--muted); margin:0 0 8px;">Pas encore tenté — <strong style="color:var(--green);">+${dc.rewardPoints} pts</strong> si réussi, <strong style="color:var(--red);">-${dc.lossPercent}% du solde</strong> si échoué. Une seule tentative par jour.</p>
       <span class="panel-cta">Relever le défi <span aria-hidden="true">→</span></span>
     </button>
     `) : ''}
@@ -954,7 +960,7 @@ function renderHome() {
       <p>4. Plus de parties gratuites aujourd'hui ? Déposez chez l'agent pour des parties bonus (onglet Portefeuille) — cet argent achète des parties, il n'est pas retirable.</p>
       <p>5. Avant chaque partie, vous pouvez miser entre 100 et 2500 de vos points : score quasi parfait, la mise augmente jusqu'à 10% ; score faible, elle peut diminuer jusqu'à 75%. Optionnel — vous pouvez toujours jouer sans miser.</p>
       <p>6. Chaque partie est chronométrée (25 secondes) : le temps s'affiche pendant que vous jouez. Si le temps s'écoule avant la fin, la partie est perdue (0 point) et une mise éventuelle perd 50% — répondez avant la fin du compte à rebours !</p>
-      <p>7. Défi du jour : obtenez au moins 80% de bonnes réponses dans une partie pour gagner un bonus de points, une fois par jour.</p>
+      <p>7. Défi du jour : questions et calculs très difficiles, sans mise, une seule tentative par jour. Réussi (≥80% de bonnes réponses) → +150 pts. Échoué (score insuffisant ou temps écoulé) → -75% de votre solde de points.</p>
     </div>
   `;
 }
@@ -977,25 +983,45 @@ function bindHomeEvents() {
   }
 }
 
-// ---------- DÉFI DU JOUR (choix du jeu) ----------
+// ---------- DÉFI DU JOUR (avertissement, puis choix du jeu) ----------
+// Écran en deux temps (juillet 2026, refonte "tout ou rien") : un avertissement explicite
+// avec les enjeux exacts (+150 pts / -75% du solde) doit être acquitté avant de proposer
+// le choix Quiz/Sprint — voir dailyChallengeConfirmed ci-dessous, un drapeau de module
+// (comme pendingGameType/confirmingDeleteAccount plus haut) plutôt qu'un champ de state,
+// remis à false à chaque retour sur cet écran pour ne jamais sauter l'avertissement.
+let dailyChallengeConfirmed = false;
+
 function renderDailyChallengeChoice() {
   const dc = state.user?.dailyChallenge;
+  if (!dailyChallengeConfirmed) {
+    return `
+      <div class="card glow-card" style="border-left-color: var(--red);">
+        <h2>⚠️ Défi du jour — tout ou rien</h2>
+        <p>Questions et calculs <strong>nettement plus difficiles</strong> que le jeu normal, sans mise possible. Une seule tentative par jour, quel que soit le résultat :</p>
+        <p style="font-size:15px; font-weight:700; color:var(--green); margin:8px 0 4px;">✅ Réussi (≥ ${dc?.thresholdPercent ?? 80}% de bonnes réponses) → +${dc?.rewardPoints ?? 150} pts</p>
+        <p style="font-size:15px; font-weight:700; color:var(--red); margin:0 0 12px;">❌ Échoué (score insuffisant ou temps écoulé) → -${dc?.lossPercent ?? 75}% de votre solde de points</p>
+        <p style="font-size:13px; color:var(--muted);">Une fois lancée, la tentative ne peut plus être annulée — impossible de réessayer aujourd'hui, même en cas d'échec.</p>
+        <button class="primary" id="daily-challenge-confirm-btn" style="margin-top:10px;">J'ai compris, continuer →</button>
+      </div>
+      <button class="link-btn" id="daily-challenge-back" style="display:block; margin-top:4px;">← Retour à l'accueil</button>
+    `;
+  }
   return `
     <div class="card glow-card">
       <h2>🎯 Défi du jour</h2>
-      <p style="font-size:13px;">Obtenez au moins <strong>${dc?.thresholdPercent ?? 80}%</strong> de bonnes réponses dans une seule partie — quiz ou sprint, au choix — pour gagner <strong>+${dc?.rewardPoints ?? 50} pts</strong> bonus.</p>
+      <p style="font-size:13px;">Choisissez le jeu pour votre unique tentative d'aujourd'hui — quiz ou sprint, tous deux en version difficile.</p>
     </div>
     <div class="game-hub">
-      <button class="game-panel" data-start="trivia">
+      <button class="game-panel" data-daily-start="trivia">
         <div class="icon-badge">🧠</div>
-        <h3>Quiz culture générale</h3>
-        <p>5 questions · 25 secondes</p>
+        <h3>Quiz difficile</h3>
+        <p>5 questions très difficiles · 25 secondes</p>
         <div class="panel-cta">Jouer <span aria-hidden="true">→</span></div>
       </button>
-      <button class="game-panel" data-start="puzzle">
+      <button class="game-panel" data-daily-start="puzzle">
         <div class="icon-badge">🔢</div>
-        <h3>Sprint de calcul</h3>
-        <p>8 calculs · 25 secondes</p>
+        <h3>Sprint difficile</h3>
+        <p>8 calculs difficiles · 25 secondes</p>
         <div class="panel-cta">Jouer <span aria-hidden="true">→</span></div>
       </button>
     </div>
@@ -1004,14 +1030,15 @@ function renderDailyChallengeChoice() {
 }
 
 function bindDailyChallengeChoiceEvents() {
-  document.querySelectorAll('[data-start]').forEach(btn => {
-    btn.addEventListener('click', () => {
-      pendingGameType = btn.dataset.start;
-      setState({ view: 'stakePrompt', error: '' });
-    });
+  const confirmBtn = document.getElementById('daily-challenge-confirm-btn');
+  if (confirmBtn) confirmBtn.addEventListener('click', () => { dailyChallengeConfirmed = true; setState({ error: '' }); });
+
+  document.querySelectorAll('[data-daily-start]').forEach(btn => {
+    btn.addEventListener('click', () => startDailyChallengeGame(btn.dataset.dailyStart));
   });
+
   const backBtn = document.getElementById('daily-challenge-back');
-  if (backBtn) backBtn.addEventListener('click', () => setState({ view: 'home', error: '' }));
+  if (backBtn) backBtn.addEventListener('click', () => { dailyChallengeConfirmed = false; setState({ view: 'home', error: '' }); });
 }
 
 // ---------- MISE (avant de jouer) ----------
@@ -1069,6 +1096,7 @@ async function startGame(type, stake) {
     const data = type === 'trivia' ? await api(`/games/trivia${query}`) : await api(`/games/puzzle${query}`);
     state.game = {
       type,
+      mode: 'normal',
       sessionToken: data.sessionToken,
       items: type === 'trivia' ? data.questions : data.problems,
       index: 0,
@@ -1093,6 +1121,42 @@ async function startGame(type, stake) {
   }
 }
 
+// Démarre une tentative de Défi du jour (juillet 2026) — pendant analogue à startGame()
+// mais volontairement séparée : pas de mise, pas de query stake, endpoints dédiés
+// /games/daily-challenge/*, et state.game porte mode:'daily' pour que renderGameScreen()
+// et submitGame() empruntent leurs branches spécifiques (voir plus bas).
+async function startDailyChallengeGame(type) {
+  setState({ error: '' });
+  try {
+    const data = type === 'trivia' ? await api('/games/daily-challenge/trivia') : await api('/games/daily-challenge/puzzle');
+    state.game = {
+      type,
+      mode: 'daily',
+      sessionToken: data.sessionToken,
+      items: type === 'trivia' ? data.questions : data.problems,
+      index: 0,
+      answers: [],
+      result: null,
+      submitting: false,
+      timeLimitSeconds: data.timeLimitSeconds || null,
+      deadlineAt: data.timeLimitSeconds ? Date.now() + data.timeLimitSeconds * 1000 : null,
+      usingBonusPlay: false,
+      remainingPlaysToday: null,
+      stake: 0,
+      // Conservés pour l'affichage du bandeau "tout ou rien" pendant la partie (voir dailyNote
+      // dans renderGameScreen) — évite de coder les valeurs en dur côté frontend.
+      rewardPoints: data.rewardPoints,
+      lossPercent: data.lossPercent,
+      startedAt: Date.now()
+    };
+    dailyChallengeConfirmed = false; // repart de l'écran d'avertissement à la prochaine visite
+    startGameMusic();
+    setState({ view: type });
+  } catch (err) {
+    setState({ view: 'dailyChallenge', error: err.message });
+  }
+}
+
 function renderGameScreen(type) {
   const g = state.game;
   if (!g || g.type !== type) {
@@ -1100,6 +1164,32 @@ function renderGameScreen(type) {
   }
   if (g.result) {
     const r = g.result;
+    // Défi du jour : résultat "tout ou rien" totalement distinct du résultat normal — la
+    // réponse du serveur n'a ni mise, ni pointsEarned, ni quota de parties (voir
+    // submitDailyChallengeTrivia/Puzzle dans backend/routes/games.js), donc on l'affiche à
+    // part plutôt que de forcer ces champs absents dans le rendu normal ci-dessous.
+    if (g.mode === 'daily') {
+      return `
+        <div class="card" style="border:2px solid ${r.won ? 'var(--green)' : 'var(--red)'};">
+          <h2>${r.won ? '🎉 Défi du jour réussi !' : '❌ Défi du jour échoué'}</h2>
+          <p>Bonnes réponses : <strong>${r.correctCount}/${r.total}</strong>${r.timedOut ? ' — temps écoulé' : ''}</p>
+          ${r.won ? `
+            <p style="font-size:20px; font-weight:800; color:var(--green);">+${r.pointsDelta} pts</p>
+          ` : `
+            <p style="font-size:20px; font-weight:800; color:var(--red);">${r.pointsDelta} pts (-75% du solde)</p>
+          `}
+          <p>Nouveau solde : <strong>${r.newBalance} pts</strong></p>
+          <p style="font-size:13px; color:var(--muted);">Une seule tentative par jour — rendez-vous demain pour un nouveau Défi du jour.</p>
+        </div>
+        <div class="card">
+          <h2>🎮 Jouer une partie normale</h2>
+          <div class="grid-2">
+            <button class="tile" data-start="trivia"><span class="emoji">🧠</span>Quiz culture générale</button>
+            <button class="tile" data-start="puzzle"><span class="emoji">🔢</span>Sprint de calcul</button>
+          </div>
+        </div>
+      `;
+    }
     const staked = r.stake > 0;
     const remainingAfter = g.remainingPlaysToday;
     const remainingAfterNote = remainingAfter !== undefined && remainingAfter !== null
@@ -1163,9 +1253,6 @@ function renderGameScreen(type) {
         ${!staked && r.noStakePenalty > 0 ? `
           <p>Partie perdue sans mise : <strong style="color:var(--red)">-${r.noStakePenalty} pts (-30% du solde)</strong></p>
         ` : ''}
-        ${r.dailyChallenge ? `
-          <p style="color:var(--green); font-weight:700;">🎯 Défi du jour relevé — +${r.dailyChallenge.rewardPoints} pts !</p>
-        ` : ''}
         <p>Nouveau solde : <strong>${r.newBalance} pts</strong></p>
         ${remainingAfterNote}
         ${bonusAfterNote}
@@ -1186,6 +1273,12 @@ function renderGameScreen(type) {
   const dots = Array.from({ length: total }, (_, i) => `<span class="${i < idx ? 'done' : ''}"></span>`).join('');
   const bonusNote = g.usingBonusPlay ? `<p style="text-align:center; font-size:12px; color:var(--muted);">🎟️ Partie bonus</p>` : '';
   const stakeNote = g.stake > 0 ? `<p style="text-align:center; font-size:12px; color:var(--muted);">💰 Mise en cours : ${g.stake} pts</p>` : '';
+  // Rappel permanent des enjeux pendant la tentative — l'avertissement déjà vu sur l'écran
+  // précédent (renderDailyChallengeChoice) ne suffit pas à lui seul une fois la partie
+  // lancée, le joueur doit garder les enjeux sous les yeux jusqu'à la dernière question.
+  const dailyNote = g.mode === 'daily'
+    ? `<p style="text-align:center; font-size:13px; font-weight:700; color:var(--red);">🎯 Défi du jour — tout ou rien : +${g.rewardPoints} pts si réussi, -${g.lossPercent}% du solde si échoué</p>`
+    : '';
   const remaining = g.remainingPlaysToday;
   const remainingNote = remaining !== undefined && remaining !== null
     ? `<p style="text-align:center; font-size:18px; font-weight:800; color:var(--game-contrast); margin:0 0 8px;">🎮 Parties gratuites restantes : <strong>${remaining}</strong></p>`
@@ -1206,6 +1299,7 @@ function renderGameScreen(type) {
     return `
       <div class="progress-dots">${dots}</div>
       ${timerNote}
+      ${dailyNote}
       ${bonusNote}
       ${stakeNote}
       ${remainingNote}
@@ -1224,6 +1318,7 @@ function renderGameScreen(type) {
   return `
     <div class="progress-dots">${dots}</div>
     ${timerNote}
+    ${dailyNote}
     ${bonusNote}
     ${stakeNote}
     ${remainingNote}
@@ -1353,13 +1448,26 @@ async function submitGame(g, extraBody = {}) {
   if (!g || g.result || g.submitting) return;
   g.submitting = true;
   try {
-    const path = g.type === 'trivia' ? '/games/trivia/submit' : '/games/puzzle/submit';
+    // Le Défi du jour a ses propres endpoints (mode 'tout ou rien', sans mise) — voir
+    // startDailyChallengeGame() et les garde-fous session.mode côté serveur dans
+    // backend/routes/games.js (submitTrivia/submitPuzzle rejettent une session 'daily', et
+    // inversement pour submitDailyChallengeTrivia/Puzzle).
+    const path = g.mode === 'daily'
+      ? (g.type === 'trivia' ? '/games/daily-challenge/trivia/submit' : '/games/daily-challenge/puzzle/submit')
+      : (g.type === 'trivia' ? '/games/trivia/submit' : '/games/puzzle/submit');
     const result = await api(path, { method: 'POST', body: { sessionToken: g.sessionToken, answers: g.answers, ...extraBody } });
     g.result = result;
     stopGameMusic(); // partie terminée (score normal ou temps écoulé) — voir music.js
     if (state.user) {
       state.user.points = result.newBalance;
       if (typeof result.bonusPlays === 'number') state.user.bonusPlays = result.bonusPlays;
+      // Met à jour localement la carte "Défi du jour" de l'Accueil (voir renderHome) sans
+      // attendre un rechargement complet du profil — la réponse de submit ne renvoie pas
+      // l'objet dailyChallenge complet, donc on ne touche qu'aux deux champs concernés et on
+      // conserve thresholdPercent/rewardPoints/lossPercent déjà connus.
+      if (g.mode === 'daily') {
+        state.user.dailyChallenge = { ...(state.user.dailyChallenge || {}), attemptedToday: true, outcome: result.won ? 'won' : 'lost' };
+      }
     }
     localStorage.setItem('konkou_user', JSON.stringify(state.user));
     render();

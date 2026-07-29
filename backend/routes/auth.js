@@ -1,6 +1,6 @@
 import crypto from 'node:crypto';
 import db from '../db.js';
-import { hashPassword, verifyPassword, signToken } from '../utils.js';
+import { hashPassword, verifyPassword, signToken, PASSWORD_RE, PASSWORD_REQUIREMENTS_MESSAGE } from '../utils.js';
 import { issueOtp, checkOtpStatus } from '../otp.js';
 
 function makeReferralCode(name) {
@@ -29,8 +29,8 @@ export async function register(body) {
   if (!PHONE_RE.test(phone)) {
     return { status: 400, data: { error: 'Numéro de téléphone invalide (8 chiffres attendus après le +509)' } };
   }
-  if (password.length < 6) {
-    return { status: 400, data: { error: 'Le mot de passe doit contenir au moins 6 caractères' } };
+  if (!PASSWORD_RE.test(password)) {
+    return { status: 400, data: { error: PASSWORD_REQUIREMENTS_MESSAGE } };
   }
   const existing = db.prepare('SELECT id, phone_verified FROM users WHERE phone = ?').get(phone);
   if (existing && existing.phone_verified) {
@@ -172,8 +172,8 @@ export async function forgotPassword(body) {
   if (!phone || !newPassword) {
     return { status: 400, data: { error: 'Numéro de téléphone et nouveau mot de passe requis' } };
   }
-  if (newPassword.length < 6) {
-    return { status: 400, data: { error: 'Le mot de passe doit contenir au moins 6 caractères' } };
+  if (!PASSWORD_RE.test(newPassword)) {
+    return { status: 400, data: { error: PASSWORD_REQUIREMENTS_MESSAGE } };
   }
 
   const user = db.prepare('SELECT id FROM users WHERE phone = ?').get(phone);

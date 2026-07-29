@@ -264,6 +264,37 @@ const server = http.createServer(async (req, res) => {
       return sendJson(res, status, data);
     }
 
+    // Défi du jour — mode "tout ou rien" distinct des parties normales ci-dessus (voir
+    // routes/games.js) : ni mise ni parties bonus/gratuites en jeu, juste une tentative
+    // par jour civil.
+    if (pathname === '/api/games/daily-challenge/trivia' && method === 'GET') {
+      const userId = requireAuth(req, res); if (userId == null) return;
+      if (blockIfAgent(req, res, userId)) return;
+      const { status, data } = gamesRoutes.getDailyChallengeTrivia(userId);
+      return sendJson(res, status, data);
+    }
+
+    if (pathname === '/api/games/daily-challenge/trivia/submit' && method === 'POST') {
+      const userId = requireAuth(req, res); if (userId == null) return;
+      if (blockIfAgent(req, res, userId)) return;
+      const { status, data } = gamesRoutes.submitDailyChallengeTrivia(userId, body);
+      return sendJson(res, status, data);
+    }
+
+    if (pathname === '/api/games/daily-challenge/puzzle' && method === 'GET') {
+      const userId = requireAuth(req, res); if (userId == null) return;
+      if (blockIfAgent(req, res, userId)) return;
+      const { status, data } = gamesRoutes.getDailyChallengePuzzle(userId);
+      return sendJson(res, status, data);
+    }
+
+    if (pathname === '/api/games/daily-challenge/puzzle/submit' && method === 'POST') {
+      const userId = requireAuth(req, res); if (userId == null) return;
+      if (blockIfAgent(req, res, userId)) return;
+      const { status, data } = gamesRoutes.submitDailyChallengePuzzle(userId, body);
+      return sendJson(res, status, data);
+    }
+
     if (pathname === '/api/wallet' && method === 'GET') {
       const userId = requireAuth(req, res); if (userId == null) return;
       if (blockIfAgent(req, res, userId)) return;

@@ -192,12 +192,15 @@ CREATE TABLE IF NOT EXISTS deleted_phones (
   deleted_at TEXT DEFAULT (datetime('now'))
 );
 
--- Défi du jour (juillet 2026) : un objectif quotidien basé sur la PERFORMANCE (voir
--- DAILY_CHALLENGE_PERCENT dans routes/games.js), pas sur la simple présence — jouer une
--- partie ne suffit pas, il faut un score suffisant. La contrainte UNIQUE(user_id,
--- claim_date) garantit qu'une seule ligne existe par joueur et par jour civil, donc que
--- tryCreditDailyChallenge() (routes/games.js) ne peut jamais créditer la récompense deux
--- fois le même jour, même si le joueur enchaîne plusieurs parties qualifiantes.
+-- Défi du jour (juillet 2026, refondu ensuite en un mode "tout ou rien" — voir
+-- routes/games.js) : une TENTATIVE explicite et distincte des parties normales (questions
+-- très difficiles, aucune mise), au plus une par joueur et par jour civil. La contrainte
+-- UNIQUE(user_id, claim_date) garantissait à l'origine qu'une seule RÉCOMPENSE ne pouvait
+-- être créditée par jour ; elle sert maintenant à garantir qu'une seule TENTATIVE (réussie
+-- OU échouée) est possible par jour — un échec consomme la tentative du jour tout autant
+-- qu'une réussite, pour empêcher un joueur de reperdre 75% de son solde en boucle jusqu'à
+-- réussir. outcome/points_delta (voir migration plus bas) précisent le résultat exact de
+-- cette tentative unique.
 CREATE TABLE IF NOT EXISTS daily_challenge_claims (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   user_id INTEGER NOT NULL,
@@ -208,6 +211,26 @@ CREATE TABLE IF NOT EXISTS daily_challenge_claims (
   reward_points INTEGER NOT NULL,
   created_at TEXT DEFAULT (datetime('now')),
   UNIQUE(user_id, claim_date)
+);
+
+-- Suivi "déjà vu" par joueur (juillet 2026) : empêche qu'une question de quiz (kind
+-- 'trivia'/'trivia_hard', item_key = id de la question) ou qu'un calcul de sprint (kind
+-- 'puzzle'/'puzzle_hard', item_key = son texte, ex. "7 + 3") ne soit jamais reproposé au
+-- même joueur tant que des éléments non-encore-vus restent disponibles dans le pool
+-- concerné — voir pickUnique() dans routes/games.js. last_seen_at sert de file d'attente
+-- (les plus anciennement vus sont réutilisés en priorité) une fois le pool épuisé, pour
+-- que la reprise soit aussi peu perceptible que possible plutôt qu'une réinitialisation
+-- brutale. 'kind' sépare quatre pools indépendants (quiz normal, quiz du défi du jour,
+-- sprint normal, sprint du défi du jour) : un joueur peut donc revoir une question du quiz
+-- normal au sprint... non, plus précisément, chaque pool a son propre cycle, aucun ne
+-- déborde sur un autre.
+CREATE TABLE IF NOT EXISTS user_seen_items (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id INTEGER NOT NULL,
+  kind TEXT NOT NULL,
+  item_key TEXT NOT NULL,
+  last_seen_at TEXT DEFAULT (datetime('now')),
+  UNIQUE(user_id, kind, item_key)
 );
 `);
 
@@ -267,7 +290,17 @@ for (const stmt of [
   "ALTER TABLE deposits ADD COLUMN kind TEXT NOT NULL DEFAULT 'plays'",
   // Rempli uniquement quand kind = 'points' (plays_granted reste à 0 dans ce cas, et
   // inversement) — voir routes/deposits.js, postDeposit.
-  "ALTER TABLE deposits ADD COLUMN points_granted INTEGER NOT NULL DEFAULT 0"
+  "ALTER TABLE deposits ADD COLUMN points_granted INTEGER NOT NULL DEFAULT 0",
+  // Résultat de la tentative unique du Défi du jour (juillet 2026, refonte "tout ou
+  // rien") — 'won' ou 'lost' (timeout compris, voir routes/games.js). Les lignes créées
+  // avant cette migration étaient toutes des réussites (seule une réussite créait une
+  // ligne à l'époque), donc DEFAULT 'won' reste exact pour l'historique existant.
+  "ALTER TABLE daily_challenge_claims ADD COLUMN outcome TEXT NOT NULL DEFAULT 'won'",
+  // Variation nette de points appliquée par cette tentative : +DAILY_CHALLENGE_REWARD_POINTS
+  // si outcome='won', -(75% du solde au moment de l'échec) si outcome='lost'. Champ
+  // d'affichage/historique uniquement (le solde réel est déjà à jour via users.points et
+  // la transaction associée) — les lignes historiques valent 0 ici, sans conséquence.
+  "ALTER TABLE daily_challenge_claims ADD COLUMN points_delta INTEGER NOT NULL DEFAULT 0"
 ]) {
   try { db.exec(stmt); } catch { /* column already exists */ }
 }

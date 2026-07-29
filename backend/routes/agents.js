@@ -1,6 +1,6 @@
 import crypto from 'node:crypto';
 import db from '../db.js';
-import { hashPassword } from '../utils.js';
+import { hashPassword, PASSWORD_RE, PASSWORD_REQUIREMENTS_MESSAGE } from '../utils.js';
 import { issueOtp } from '../otp.js';
 
 export function getAgentCapitalHtg() { return parseFloat(process.env.AGENT_CAPITAL_HTG || '7500'); }
@@ -180,8 +180,8 @@ export async function registerAgent(body) {
   if (!PHONE_RE.test(phone)) {
     return { status: 400, data: { error: 'Numéro de téléphone invalide (8 chiffres attendus après le +509)' } };
   }
-  if (String(password).length < 6) {
-    return { status: 400, data: { error: 'Le mot de passe doit contenir au moins 6 caractères' } };
+  if (!PASSWORD_RE.test(String(password))) {
+    return { status: 400, data: { error: PASSWORD_REQUIREMENTS_MESSAGE } };
   }
   if (!lastName || !firstName || !birthDate || !idType || !idNumber || !String(idNumber).trim() || !city || !address) {
     return { status: 400, data: { error: "Nom, prénom, date de naissance, type et numéro de pièce d'identité, ville et adresse requis" } };

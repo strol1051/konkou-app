@@ -8,6 +8,11 @@ import { isVipActive, getVipExtraDailyPlays } from './vip.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const allQuestions = JSON.parse(fs.readFileSync(path.join(__dirname, '../data/questions.json'), 'utf-8'));
+// Banque dédiée et nettement plus difficile, réservée exclusivement au Défi du jour (voir
+// plus bas) — jamais piochée pour une partie de quiz normale. Pas de filtrage par thème
+// saisonnier ici (contrairement à questionPool()) : ces questions sont volontairement
+// intemporelles.
+const dailyChallengeQuestions = JSON.parse(fs.readFileSync(path.join(__dirname, '../data/daily-challenge-questions.json'), 'utf-8'));
 
 // Questions saisonnières (voir "Banque de questions" dans README.md) : une question sans
 // champ "theme" est générale et toujours piochable ; une question avec un "theme" (ex.
@@ -74,51 +79,227 @@ function stakeMultiplier(correctCount, total) {
   return 0.25 + 0.85 * ratio;
 }
 
-// Défi du jour (juillet 2026) : obtenir au moins DAILY_CHALLENGE_PERCENT% de bonnes
-// réponses dans UNE partie (quiz ou sprint, peu importe lequel) rapporte
-// DAILY_CHALLENGE_REWARD_POINTS points, une seule fois par jour civil — voir la table
-// daily_challenge_claims dans db.js pour la contrainte qui empêche un double crédit.
-// Volontairement basé sur la performance plutôt que la présence, cohérent avec le reste
-// de l'app (mise, classement) qui récompense le score plutôt que juste "avoir joué".
+// ---------- Défi du jour — mode "tout ou rien" (refonte juillet 2026) ----------
+// Une tentative explicite et distincte des parties normales — voir renderDailyChallengeChoice
+// côté frontend, qui affiche désormais un écran d'avertissement avant de laisser
+// commencer : questions/calculs nettement plus difficiles que le jeu normal (banque
+// dédiée dailyChallengeQuestions / HARD_PUZZLE_SPACE ci-dessous), AUCUNE mise, AUCUN
+// point gagné au fil des bonnes réponses. Un seul résultat net par jour civil :
+// - réussite (>= DAILY_CHALLENGE_PERCENT% de bonnes réponses) : +DAILY_CHALLENGE_REWARD_POINTS
+// - échec (score insuffisant OU temps écoulé) : -DAILY_CHALLENGE_LOSS_PERCENT% du solde
+// Un échec consomme la tentative du jour tout autant qu'une réussite (voir la contrainte
+// UNIQUE(user_id, claim_date) sur daily_challenge_claims) : impossible de retenter après
+// un échec pour "rejouer sa perte" le même jour — sinon un joueur pourrait reperdre 75% de
+// son solde en boucle jusqu'à réussir, ce qui viderait un compte en 2-3 tentatives.
 const DAILY_CHALLENGE_PERCENT = 80;
-const DAILY_CHALLENGE_REWARD_POINTS = 50;
+const DAILY_CHALLENGE_REWARD_POINTS = 150;
+const DAILY_CHALLENGE_LOSS_PERCENT = 75;
+const DAILY_CHALLENGE_QUESTIONS_PER_ROUND = 5; // même nombre que le quiz normal
+const DAILY_CHALLENGE_PROBLEMS_PER_ROUND = 8; // même nombre que le sprint normal
 
-// Retourne { rewardPoints } si CE résultat vient de faire gagner le défi du jour (et le
-// crédite immédiatement), ou null sinon — score sous le seuil, ou défi déjà relevé
-// aujourd'hui via une autre partie. Les appelants (submitTrivia/submitPuzzle) ne
-// l'invoquent jamais pour une partie expirée (isTimeout) : laisser filer le temps ne doit
-// jamais qualifier, même avec de bonnes réponses déjà données.
-function tryCreditDailyChallenge(userId, gameType, correctCount, total) {
-  if (total <= 0 || (correctCount / total) * 100 < DAILY_CHALLENGE_PERCENT) return null;
-
-  try {
-    db.prepare(
-      `INSERT INTO daily_challenge_claims (user_id, claim_date, game_type, score, total, reward_points)
-       VALUES (?, date('now'), ?, ?, ?, ?)`
-    ).run(userId, gameType, correctCount, total, DAILY_CHALLENGE_REWARD_POINTS);
-  } catch {
-    // Contrainte UNIQUE(user_id, claim_date) déjà utilisée aujourd'hui.
-    return null;
+// Espace des calculs du Défi du jour — nettement plus difficile que NORMAL_PUZZLE_SPACE :
+// nombres à deux chiffres (10 à 50, contre 1 à 12) et un quatrième opérateur, la division
+// (toujours exacte : b et le quotient sont choisis d'abord, puis a = b × quotient, jamais
+// l'inverse). Comme NORMAL_PUZZLE_SPACE, énuméré une seule fois au démarrage pour que
+// pickUnique() garantisse l'absence de répétition par joueur au sein de ce pool dédié
+// (kind PUZZLE_HARD, totalement séparé du suivi du sprint normal).
+function buildHardPuzzleSpace() {
+  const problems = [];
+  for (let a = 10; a <= 50; a++) {
+    for (let b = 10; b <= 50; b++) {
+      problems.push({ text: `${a} + ${b}`, answer: a + b });
+      if (a >= b) problems.push({ text: `${a} - ${b}`, answer: a - b });
+    }
   }
+  for (let a = 10; a <= 25; a++) {
+    for (let b = 2; b <= 12; b++) {
+      problems.push({ text: `${a} × ${b}`, answer: a * b });
+    }
+  }
+  for (let b = 2; b <= 12; b++) {
+    for (let q = 2; q <= 20; q++) {
+      problems.push({ text: `${b * q} ÷ ${b}`, answer: q });
+    }
+  }
+  return problems;
+}
+const HARD_PUZZLE_SPACE = buildHardPuzzleSpace();
 
-  db.prepare('UPDATE users SET points = points + ? WHERE id = ?').run(DAILY_CHALLENGE_REWARD_POINTS, userId);
-  db.prepare('INSERT INTO transactions (user_id, type, amount, note) VALUES (?, ?, ?, ?)')
-    .run(userId, 'daily_challenge_reward', DAILY_CHALLENGE_REWARD_POINTS,
-      `Défi du jour relevé (${correctCount}/${total} à ${gameType === 'trivia' ? 'Quiz' : 'Sprint'}) — +${DAILY_CHALLENGE_REWARD_POINTS} pts`);
-
-  return { rewardPoints: DAILY_CHALLENGE_REWARD_POINTS };
+function hasAttemptedDailyChallengeToday(userId) {
+  return !!db.prepare(
+    `SELECT 1 FROM daily_challenge_claims WHERE user_id = ? AND claim_date = date('now') LIMIT 1`
+  ).get(userId);
 }
 
 // Consulté par routes/profile.js pour afficher la carte "Défi du jour" sur l'accueil,
-// avant même que le joueur ait lancé une partie aujourd'hui.
+// avant même que le joueur ait lancé une tentative aujourd'hui. outcome distingue une
+// réussite d'un échec — les deux verrouillent l'accès au défi jusqu'au lendemain, mais ne
+// doivent pas s'afficher pareil côté joueur (voir renderHome() dans app.js).
 export function getDailyChallengeStatus(userId) {
-  const claimed = db.prepare(
-    `SELECT 1 FROM daily_challenge_claims WHERE user_id = ? AND claim_date = date('now') LIMIT 1`
+  const row = db.prepare(
+    `SELECT outcome FROM daily_challenge_claims WHERE user_id = ? AND claim_date = date('now') LIMIT 1`
   ).get(userId);
   return {
     thresholdPercent: DAILY_CHALLENGE_PERCENT,
     rewardPoints: DAILY_CHALLENGE_REWARD_POINTS,
-    completedToday: !!claimed
+    lossPercent: DAILY_CHALLENGE_LOSS_PERCENT,
+    attemptedToday: !!row,
+    outcome: row ? row.outcome : null // 'won' | 'lost' | null
+  };
+}
+
+export function getDailyChallengeTrivia(userId) {
+  if (hasAttemptedDailyChallengeToday(userId)) {
+    return { status: 409, data: { error: "Défi du jour déjà tenté aujourd'hui — revenez demain." } };
+  }
+  const picked = pickUnique(userId, SEEN_KIND.TRIVIA_HARD, dailyChallengeQuestions, DAILY_CHALLENGE_QUESTIONS_PER_ROUND, q => q.id);
+  const sessionToken = crypto.randomBytes(12).toString('hex');
+  // mode: 'daily' (voir aussi getTrivia/getPuzzle, qui posent 'normal') empêche qu'une
+  // session de quiz normal soit soumise à submitDailyChallengeTrivia (banque facile,
+  // aurait rendu le défi trivial à réussir) ou inversement — vérifié explicitement dans
+  // les deux familles de fonctions submit*, pas seulement via gameType.
+  activeSessions.set(sessionToken, {
+    userId, gameType: 'trivia', mode: 'daily', correctAnswers: picked.map(q => q.answer),
+    createdAt: Date.now(), usingBonus: false, stake: 0,
+    timeLimitSeconds: TRIVIA_TIME_LIMIT_SECONDS
+  });
+  return {
+    status: 200,
+    data: {
+      sessionToken,
+      questions: picked.map(q => ({ id: q.id, question: q.question, choices: q.choices })),
+      timeLimitSeconds: TRIVIA_TIME_LIMIT_SECONDS,
+      thresholdPercent: DAILY_CHALLENGE_PERCENT,
+      rewardPoints: DAILY_CHALLENGE_REWARD_POINTS,
+      lossPercent: DAILY_CHALLENGE_LOSS_PERCENT
+    }
+  };
+}
+
+export function getDailyChallengePuzzle(userId) {
+  if (hasAttemptedDailyChallengeToday(userId)) {
+    return { status: 409, data: { error: "Défi du jour déjà tenté aujourd'hui — revenez demain." } };
+  }
+  const picked = pickUnique(userId, SEEN_KIND.PUZZLE_HARD, HARD_PUZZLE_SPACE, DAILY_CHALLENGE_PROBLEMS_PER_ROUND, p => p.text);
+  const problems = picked.map((p, i) => ({ id: i, text: p.text }));
+  const correctAnswers = picked.map(p => p.answer);
+  const sessionToken = crypto.randomBytes(12).toString('hex');
+  activeSessions.set(sessionToken, {
+    userId, gameType: 'puzzle', mode: 'daily', correctAnswers,
+    createdAt: Date.now(), usingBonus: false, stake: 0,
+    timeLimitSeconds: PUZZLE_TIME_LIMIT_SECONDS
+  });
+  return {
+    status: 200,
+    data: {
+      sessionToken, problems,
+      timeLimitSeconds: PUZZLE_TIME_LIMIT_SECONDS,
+      thresholdPercent: DAILY_CHALLENGE_PERCENT,
+      rewardPoints: DAILY_CHALLENGE_REWARD_POINTS,
+      lossPercent: DAILY_CHALLENGE_LOSS_PERCENT
+    }
+  };
+}
+
+// Corrige les réponses d'une tentative de Défi du jour — pas de mise, pas de points au fil
+// des bonnes réponses, un seul résultat net (voir le commentaire en tête de section).
+// isTimeout compte TOUJOURS comme un échec, même si de bonnes réponses avaient déjà été
+// données : laisser filer le temps ne doit jamais être un moyen d'éviter la perte (même
+// principe que scoreOutcome() pour les parties normales).
+function scoreDailyChallenge(session, answers, timedOutFlag) {
+  let correctCount = 0;
+  session.correctAnswers.forEach((correct, i) => { if (Number(answers[i]) === correct) correctCount++; });
+  const total = session.correctAnswers.length;
+  const isTimeout = !!timedOutFlag && (Date.now() - session.createdAt) > session.timeLimitSeconds * 1000;
+  const won = !isTimeout && total > 0 && (correctCount / total) * 100 >= DAILY_CHALLENGE_PERCENT;
+  return { correctCount, total, isTimeout, won };
+}
+
+// Enregistre la tentative UNIQUE du jour (gagnée ou perdue) et applique son résultat au
+// solde. Retourne null si une tentative existe déjà pour aujourd'hui (contrainte
+// UNIQUE(user_id, claim_date) sur daily_challenge_claims) — filet de sécurité contre une
+// double soumission concurrente, en plus du contrôle déjà fait par
+// getDailyChallengeTrivia/Puzzle avant même de démarrer la tentative.
+function recordDailyChallengeAttempt(userId, gameType, correctCount, total, won) {
+  let pointsDelta;
+  if (won) {
+    pointsDelta = DAILY_CHALLENGE_REWARD_POINTS;
+  } else {
+    const user = db.prepare('SELECT points FROM users WHERE id = ?').get(userId);
+    pointsDelta = -Math.round((user?.points || 0) * DAILY_CHALLENGE_LOSS_PERCENT / 100);
+  }
+
+  try {
+    db.prepare(
+      `INSERT INTO daily_challenge_claims (user_id, claim_date, game_type, score, total, reward_points, outcome, points_delta)
+       VALUES (?, date('now'), ?, ?, ?, ?, ?, ?)`
+    ).run(userId, gameType, correctCount, total, won ? DAILY_CHALLENGE_REWARD_POINTS : 0, won ? 'won' : 'lost', pointsDelta);
+  } catch {
+    return null; // Déjà tenté aujourd'hui (concurrence) — voir le commentaire ci-dessus.
+  }
+
+  db.prepare('UPDATE users SET points = max(0, points + ?) WHERE id = ?').run(pointsDelta, userId);
+  db.prepare('INSERT INTO transactions (user_id, type, amount, note) VALUES (?, ?, ?, ?)')
+    .run(userId, won ? 'daily_challenge_win' : 'daily_challenge_loss', pointsDelta,
+      won
+        ? `Défi du jour réussi (${correctCount}/${total} à ${gameType === 'trivia' ? 'Quiz difficile' : 'Sprint difficile'}) — +${DAILY_CHALLENGE_REWARD_POINTS} pts`
+        : `Défi du jour échoué (${correctCount}/${total} à ${gameType === 'trivia' ? 'Quiz difficile' : 'Sprint difficile'}) — -${DAILY_CHALLENGE_LOSS_PERCENT}% du solde (${pointsDelta} pts)`);
+
+  const user = db.prepare('SELECT points FROM users WHERE id = ?').get(userId);
+  return { won, pointsDelta, newBalance: user.points };
+}
+
+export function submitDailyChallengeTrivia(userId, body) {
+  const { sessionToken, answers, timedOut } = body || {};
+  const session = activeSessions.get(sessionToken);
+  if (!session || session.userId !== userId || session.gameType !== 'trivia' || session.mode !== 'daily') {
+    return { status: 400, data: { error: 'Session de défi invalide ou expirée' } };
+  }
+  if (!checkNotExpired(session)) {
+    activeSessions.delete(sessionToken);
+    return { status: 400, data: { error: "Temps écoulé pour cette tentative — trop de temps s'est écoulé depuis le début." } };
+  }
+  if (!Array.isArray(answers) || answers.length !== session.correctAnswers.length) {
+    return { status: 400, data: { error: 'Réponses invalides' } };
+  }
+
+  const { correctCount, total, isTimeout, won } = scoreDailyChallenge(session, answers, timedOut);
+  activeSessions.delete(sessionToken);
+  const result = recordDailyChallengeAttempt(userId, 'trivia', correctCount, total, won);
+  if (!result) {
+    return { status: 409, data: { error: "Défi du jour déjà tenté aujourd'hui — revenez demain." } };
+  }
+
+  return {
+    status: 200,
+    data: { correctCount, total, timedOut: isTimeout, won: result.won, pointsDelta: result.pointsDelta, newBalance: result.newBalance }
+  };
+}
+
+export function submitDailyChallengePuzzle(userId, body) {
+  const { sessionToken, answers, timedOut } = body || {};
+  const session = activeSessions.get(sessionToken);
+  if (!session || session.userId !== userId || session.gameType !== 'puzzle' || session.mode !== 'daily') {
+    return { status: 400, data: { error: 'Session de défi invalide ou expirée' } };
+  }
+  if (!checkNotExpired(session)) {
+    activeSessions.delete(sessionToken);
+    return { status: 400, data: { error: "Temps écoulé pour cette tentative — trop de temps s'est écoulé depuis le début." } };
+  }
+  if (!Array.isArray(answers) || answers.length !== session.correctAnswers.length) {
+    return { status: 400, data: { error: 'Réponses invalides' } };
+  }
+
+  const { correctCount, total, isTimeout, won } = scoreDailyChallenge(session, answers, timedOut);
+  activeSessions.delete(sessionToken);
+  const result = recordDailyChallengeAttempt(userId, 'puzzle', correctCount, total, won);
+  if (!result) {
+    return { status: 409, data: { error: "Défi du jour déjà tenté aujourd'hui — revenez demain." } };
+  }
+
+  return {
+    status: 200,
+    data: { correctCount, total, timedOut: isTimeout, won: result.won, pointsDelta: result.pointsDelta, newBalance: result.newBalance }
   };
 }
 
@@ -180,6 +361,93 @@ function shuffle(arr) {
   return a;
 }
 
+// ---------- Anti-répétition par joueur (juillet 2026) ----------
+// Quatre pools indépendants (voir user_seen_items dans db.js) : le quiz normal et le quiz
+// du Défi du jour ne partagent pas leur historique "déjà vu", pareil pour les deux
+// variantes du sprint de calcul — chacun a son propre cycle.
+const SEEN_KIND = { TRIVIA: 'trivia', TRIVIA_HARD: 'trivia_hard', PUZZLE: 'puzzle', PUZZLE_HARD: 'puzzle_hard' };
+
+function getSeenKeys(userId, kind) {
+  return new Set(
+    db.prepare(`SELECT item_key FROM user_seen_items WHERE user_id = ? AND kind = ?`).all(userId, kind).map(r => r.item_key)
+  );
+}
+
+const markSeenStmt = db.prepare(`
+  INSERT INTO user_seen_items (user_id, kind, item_key, last_seen_at) VALUES (?, ?, ?, datetime('now'))
+  ON CONFLICT(user_id, kind, item_key) DO UPDATE SET last_seen_at = datetime('now')
+`);
+function markSeen(userId, kind, keys) {
+  for (const key of keys) markSeenStmt.run(userId, kind, String(key));
+}
+
+// Éléments déjà vus par ce joueur pour ce pool, du moins récemment vu au plus récemment
+// vu, en excluant `excludeKeys` (des éléments déjà choisis dans le même tirage) — sert de
+// file d'attente pour compléter un tirage une fois le pool d'éléments "jamais vus" épuisé.
+function leastRecentlySeenKeys(userId, kind, excludeKeys, limit) {
+  const rows = db.prepare(`SELECT item_key FROM user_seen_items WHERE user_id = ? AND kind = ? ORDER BY last_seen_at ASC`).all(userId, kind);
+  const out = [];
+  for (const r of rows) {
+    if (excludeKeys.has(r.item_key)) continue;
+    out.push(r.item_key);
+    if (out.length >= limit) break;
+  }
+  return out;
+}
+
+// Choisit `count` éléments dans `items` (via keyOf(item) -> clé stable, ex. l'id d'une
+// question ou le texte d'un calcul) sans jamais reproposer à CE joueur un élément déjà vu
+// pour ce `kind`, tant que le pool contient encore des éléments non-vus. Une fois ce pool
+// épuisé (joueur très actif), complète avec les éléments les MOINS récemment vus plutôt
+// que de réinitialiser brutalement tout l'historique — la reprise est donc aussi
+// discrète que possible. Met à jour last_seen_at pour tous les éléments choisis (y
+// compris un réemploi) avant de retourner.
+function pickUnique(userId, kind, items, count, keyOf) {
+  const seen = getSeenKeys(userId, kind);
+  const unseen = shuffle(items.filter(it => !seen.has(String(keyOf(it)))));
+  let picked = unseen.slice(0, count);
+  if (picked.length < count) {
+    const pickedKeys = new Set(picked.map(it => String(keyOf(it))));
+    const need = count - picked.length;
+    const lruKeys = leastRecentlySeenKeys(userId, kind, pickedKeys, need);
+    const byKey = new Map(items.map(it => [String(keyOf(it)), it]));
+    for (const k of lruKeys) {
+      const it = byKey.get(k);
+      if (it) { picked.push(it); pickedKeys.add(k); }
+    }
+    // Garde-fou extrême (ne devrait jamais se produire, `items` couvrant toujours tout ce
+    // qui a pu être marqué "vu") : complète avec ce qui reste plutôt que de renvoyer moins
+    // d'éléments que demandé.
+    if (picked.length < count) {
+      const rest = shuffle(items.filter(it => !pickedKeys.has(String(keyOf(it)))));
+      picked = picked.concat(rest.slice(0, count - picked.length));
+    }
+  }
+  picked = shuffle(picked); // évite que les éléments "jamais vus" soient toujours en tête
+  markSeen(userId, kind, picked.map(it => String(keyOf(it))));
+  return picked;
+}
+
+// Espace complet des calculs du Sprint STANDARD (hors Défi du jour) — mêmes bornes que
+// l'ancien générateur purement aléatoire (a et b entre 1 et 12, opérateurs +/-/×,
+// soustraction toujours calculée a >= b pour ne jamais afficher de résultat négatif), mais
+// énuméré une seule fois au démarrage plutôt que tiré au hasard à chaque partie : ça
+// permet à pickUnique() de garantir qu'aucun calcul n'est jamais reproposé au même joueur
+// tant que ce pool (366 calculs uniques) n'est pas épuisé. `text` sert de clé stable
+// ("7 + 3") pour le suivi anti-répétition.
+function buildNormalPuzzleSpace() {
+  const problems = [];
+  for (let a = 1; a <= 12; a++) {
+    for (let b = 1; b <= 12; b++) {
+      problems.push({ text: `${a} + ${b}`, answer: a + b });
+      problems.push({ text: `${a} × ${b}`, answer: a * b });
+      if (a >= b) problems.push({ text: `${a} - ${b}`, answer: a - b });
+    }
+  }
+  return problems;
+}
+const NORMAL_PUZZLE_SPACE = buildNormalPuzzleSpace();
+
 function todayCount(userId, gameType) {
   return db.prepare(
     `SELECT COUNT(*) as c FROM game_sessions WHERE user_id = ? AND game_type = ? AND date(played_at) = date('now')`
@@ -219,10 +487,14 @@ export function getTrivia(userId, rawStake) {
   const stakeCheck = validateStake(rawStake, userId);
   if (stakeCheck.error) return { status: 400, data: { error: stakeCheck.error } };
 
-  const picked = shuffle(questionPool()).slice(0, 5);
+  const picked = pickUnique(userId, SEEN_KIND.TRIVIA, questionPool(), 5, q => q.id);
   const sessionToken = crypto.randomBytes(12).toString('hex');
+  // mode: 'normal' distingue explicitement cette session d'une session de Défi du jour
+  // (mode: 'daily', voir getDailyChallengeTrivia) — empêche qu'un token de quiz normal
+  // (banque facile) soit soumis à submitDailyChallengeTrivia pour contourner la difficulté
+  // du défi, vérifié dans submitDailyChallengeTrivia/Puzzle.
   activeSessions.set(sessionToken, {
-    userId, gameType: 'trivia', correctAnswers: picked.map(q => q.answer),
+    userId, gameType: 'trivia', mode: 'normal', correctAnswers: picked.map(q => q.answer),
     createdAt: Date.now(), usingBonus: allowance.usingBonus, stake: stakeCheck.stake,
     timeLimitSeconds: TRIVIA_TIME_LIMIT_SECONDS
   });
@@ -304,7 +576,12 @@ function applyNoStakePenalty(userId, lostWithoutStake, gameTypeNote) {
 export function submitTrivia(userId, body) {
   const { sessionToken, answers, timedOut } = body || {};
   const session = activeSessions.get(sessionToken);
-  if (!session || session.userId !== userId || session.gameType !== 'trivia') {
+  // session.mode === 'daily' est explicitement rejeté ici (et pas seulement accepté par
+  // omission) : sans ce contrôle, un joueur pourrait démarrer une tentative de Défi du
+  // jour puis soumettre ses réponses à CE endpoint normal plutôt qu'à
+  // submitDailyChallengeTrivia, pour éviter la perte de 75% en cas d'échec tout en gardant
+  // les points normaux gagnés par bonne réponse — voir getDailyChallengeTrivia.
+  if (!session || session.userId !== userId || session.gameType !== 'trivia' || session.mode === 'daily') {
     return { status: 400, data: { error: 'Session de jeu invalide ou expirée' } };
   }
   if (!checkNotExpired(session)) {
@@ -337,7 +614,6 @@ export function submitTrivia(userId, body) {
   }
 
   const noStakePenalty = applyNoStakePenalty(userId, lostWithoutStake, 'de quiz');
-  const dailyChallenge = isTimeout ? null : tryCreditDailyChallenge(userId, 'trivia', correctCount, total);
 
   if (session.usingBonus) {
     db.prepare('UPDATE users SET bonus_plays = bonus_plays - 1 WHERE id = ? AND bonus_plays > 0').run(userId);
@@ -348,7 +624,7 @@ export function submitTrivia(userId, body) {
     status: 200,
     data: {
       correctCount, total, pointsEarned, timedOut: isTimeout,
-      stake: session.stake, stakeResult, stakeDelta, noStakePenalty, dailyChallenge,
+      stake: session.stake, stakeResult, stakeDelta, noStakePenalty,
       newBalance: user.points, bonusPlays: user.bonus_plays
     }
   };
@@ -361,23 +637,12 @@ export function getPuzzle(userId, rawStake) {
   const stakeCheck = validateStake(rawStake, userId);
   if (stakeCheck.error) return { status: 400, data: { error: stakeCheck.error } };
 
-  const ops = ['+', '-', '×'];
-  const problems = [];
-  const correctAnswers = [];
-  for (let i = 0; i < 8; i++) {
-    const op = ops[Math.floor(Math.random() * ops.length)];
-    let a = Math.floor(Math.random() * 12) + 1;
-    let b = Math.floor(Math.random() * 12) + 1;
-    let answer;
-    if (op === '+') answer = a + b;
-    else if (op === '-') { if (b > a) [a, b] = [b, a]; answer = a - b; }
-    else answer = a * b;
-    problems.push({ id: i, text: `${a} ${op} ${b}` });
-    correctAnswers.push(answer);
-  }
+  const picked = pickUnique(userId, SEEN_KIND.PUZZLE, NORMAL_PUZZLE_SPACE, 8, p => p.text);
+  const problems = picked.map((p, i) => ({ id: i, text: p.text }));
+  const correctAnswers = picked.map(p => p.answer);
   const sessionToken = crypto.randomBytes(12).toString('hex');
   activeSessions.set(sessionToken, {
-    userId, gameType: 'puzzle', correctAnswers, createdAt: Date.now(), usingBonus: allowance.usingBonus, stake: stakeCheck.stake,
+    userId, gameType: 'puzzle', mode: 'normal', correctAnswers, createdAt: Date.now(), usingBonus: allowance.usingBonus, stake: stakeCheck.stake,
     timeLimitSeconds: PUZZLE_TIME_LIMIT_SECONDS
   });
   return {
@@ -395,7 +660,10 @@ export function getPuzzle(userId, rawStake) {
 export function submitPuzzle(userId, body) {
   const { sessionToken, answers, timedOut } = body || {};
   const session = activeSessions.get(sessionToken);
-  if (!session || session.userId !== userId || session.gameType !== 'puzzle') {
+  // Voir le commentaire équivalent dans submitTrivia : une session de Défi du jour
+  // (mode: 'daily') est explicitement rejetée ici pour ne pas permettre d'éviter la perte
+  // de 75% en soumettant à ce endpoint normal à la place de submitDailyChallengePuzzle.
+  if (!session || session.userId !== userId || session.gameType !== 'puzzle' || session.mode === 'daily') {
     return { status: 400, data: { error: 'Session de jeu invalide ou expirée' } };
   }
   if (!checkNotExpired(session)) {
@@ -426,7 +694,6 @@ export function submitPuzzle(userId, body) {
   }
 
   const noStakePenalty = applyNoStakePenalty(userId, lostWithoutStake, 'de calcul');
-  const dailyChallenge = isTimeout ? null : tryCreditDailyChallenge(userId, 'puzzle', correctCount, total);
 
   if (session.usingBonus) {
     db.prepare('UPDATE users SET bonus_plays = bonus_plays - 1 WHERE id = ? AND bonus_plays > 0').run(userId);
@@ -437,7 +704,7 @@ export function submitPuzzle(userId, body) {
     status: 200,
     data: {
       correctCount, total, pointsEarned, timedOut: isTimeout,
-      stake: session.stake, stakeResult, stakeDelta, noStakePenalty, dailyChallenge,
+      stake: session.stake, stakeResult, stakeDelta, noStakePenalty,
       newBalance: user.points, bonusPlays: user.bonus_plays
     }
   };
