@@ -408,7 +408,7 @@ const state = {
   token: localStorage.getItem('konkou_token') || null,
   user: JSON.parse(localStorage.getItem('konkou_user') || 'null'),
   view: 'home',
-  authMode: 'login', // login | register | awaiting-confirm | forgot-request
+  authMode: 'login', // login | register | awaiting-confirm | forgot-request | reset-new-password
   // Détails de la demande en attente de confirmation WhatsApp par un admin :
   // { phone, purpose ('verify_phone'|'reset_password'), code, whatsappLink }
   awaiting: null,
@@ -456,7 +456,16 @@ function startPolling() {
       const data = await res.json();
       if (data.status === 'confirmed') {
         stopPolling();
-        await completeLogin(data.token, data.user);
+        if (purpose === 'reset_password') {
+          // Pas de token à ce stade — un admin vient seulement d'AUTORISER la demande
+          // (voir confirmPasswordReset dans routes/admin.js), le mot de passe n'a pas
+          // encore été choisi. On bascule vers le formulaire dédié plutôt que de se
+          // connecter directement ; state.awaiting (phone/code) reste intact puisqu'on
+          // ne passe pas par completeLogin() ici (voir renderSetNewPassword ci-dessus).
+          setState({ authMode: 'reset-new-password', error: '', success: '' });
+        } else {
+          await completeLogin(data.token, data.user);
+        }
       } else if (data.status === 'expired' || data.status === 'invalid') {
         stopPolling();
         setState({ awaitingStatus: data.status });
@@ -643,6 +652,7 @@ function authShell(inner) {
 function renderAuth() {
   if (state.authMode === 'awaiting-confirm') return authShell(renderAwaitingConfirm());
   if (state.authMode === 'forgot-request') return authShell(renderForgotRequest());
+  if (state.authMode === 'reset-new-password') return authShell(renderSetNewPassword());
   if (state.authMode === 'contact') return authShell(renderContactForm());
   if (state.authMode === 'agent-register') return authShell(renderAgentRegisterForm());
   return authShell(renderLoginRegister());
@@ -749,15 +759,41 @@ function bindContactEvents(onBack) {
   });
 }
 
+// Depuis la refonte de juillet 2026, cette demande ne contient plus de nouveau mot de
+// passe (voir forgotPassword() dans routes/auth.js) — même principe que l'inscription :
+// on demande d'abord, un admin autorise ensuite dans "Vérifications", et c'est SEULEMENT
+// après cette autorisation que le joueur/agent choisit son nouveau mot de passe (voir
+// renderSetNewPassword() plus bas). L'ancien champ "nouveau mot de passe" ici — saisi
+// avant toute vérification d'identité — a été retiré pour cette raison.
 function renderForgotRequest() {
   return `
     <div class="card">
       <h2>Mot de passe oublié</h2>
-      <p>Entrez votre numéro et votre nouveau mot de passe. Vous confirmerez ensuite via WhatsApp pour l'activer.</p>
+      <p>Entrez votre numéro. Un administrateur autorisera votre demande via WhatsApp, puis vous pourrez choisir votre nouveau mot de passe directement dans l'application.</p>
       <form id="forgot-request-form">
         <input name="phone" placeholder="Numéro de téléphone" required />
-        ${pwdField('newPassword', 'Nouveau mot de passe (min. 8 car., 1 majuscule, 1 chiffre)')}
         <button class="primary" type="submit">Continuer</button>
+      </form>
+      <button class="link-btn" id="back-to-login" style="margin-top:14px;">Retour à la connexion</button>
+    </div>
+  `;
+}
+
+// Étape finale de la réinitialisation, affichée seulement après qu'un admin a autorisé la
+// demande (voir startPolling(), qui bascule authMode ici dès que /auth/verify-status
+// renvoie 'confirmed' pour purpose === 'reset_password'). state.awaiting.phone/code sont
+// ceux reçus à la demande initiale (voir bindForgotRequestEvents) — c'est ce même
+// triplet (phone, purpose, code) qui prouve l'autorisation côté serveur (voir
+// consumeConfirmedOtp dans otp.js), sans qu'il soit nécessaire d'être déjà connecté.
+function renderSetNewPassword() {
+  const a = state.awaiting || {};
+  return `
+    <div class="card">
+      <h2>Choisissez votre nouveau mot de passe</h2>
+      <p>Votre demande de réinitialisation pour <strong>${escapeHtml(a.phone || '')}</strong> a été autorisée. Entrez votre nouveau mot de passe pour terminer.</p>
+      <form id="set-new-password-form">
+        ${pwdField('newPassword', 'Nouveau mot de passe (min. 8 car., 1 majuscule, 1 chiffre)')}
+        <button class="primary" type="submit">Valider</button>
       </form>
       <button class="link-btn" id="back-to-login" style="margin-top:14px;">Retour à la connexion</button>
     </div>
@@ -797,10 +833,12 @@ function renderAwaitingConfirm() {
         <a class="primary" style="display:block; text-align:center; text-decoration:none; background:#25D366; margin-bottom:10px;" href="${a.whatsappLink}" target="_blank" rel="noopener">
           💬 Confirmer via WhatsApp
         </a>
-        <p style="font-size:13px;">Un message pré-rempli s'ouvrira dans WhatsApp — envoyez-le tel quel. Votre compte sera activé automatiquement dès qu'un agent l'aura confirmé.</p>
+        <p style="font-size:13px;">Un message pré-rempli s'ouvrira dans WhatsApp — envoyez-le tel quel. ${isReset
+          ? "Dès qu'un administrateur aura autorisé votre demande, vous pourrez choisir votre nouveau mot de passe ici même."
+          : 'Votre compte sera activé automatiquement dès qu\'un agent l\'aura confirmé.'}</p>
         <p class="center-msg" style="padding:14px 0;">⏳ En attente de confirmation…</p>
       ` : `
-        <div class="error-banner">Aucun numéro WhatsApp n'est configuré côté serveur pour le moment — contactez l'administrateur pour activer votre compte manuellement.</div>
+        <div class="error-banner">Aucun numéro WhatsApp n'est configuré côté serveur pour le moment — contactez l'administrateur pour ${isReset ? 'autoriser votre réinitialisation' : 'activer votre compte'} manuellement.</div>
       `}
       <button class="link-btn" id="resend-link">Je n'ai pas pu envoyer le message — relancer</button>
       <button class="link-btn" id="back-to-login" style="margin-top:10px; display:block;">Retour à la connexion</button>
@@ -811,6 +849,7 @@ function renderAwaitingConfirm() {
 function bindAuthEvents() {
   if (state.authMode === 'awaiting-confirm') return bindAwaitingConfirmEvents();
   if (state.authMode === 'forgot-request') return bindForgotRequestEvents();
+  if (state.authMode === 'reset-new-password') return bindSetNewPasswordEvents();
   if (state.authMode === 'contact') {
     return bindContactEvents(() => setState({ authMode: 'login', error: '', success: '' }));
   }
@@ -903,6 +942,32 @@ function bindForgotRequestEvents() {
       } else {
         setState({ authMode: 'login', error: '', success: data.message });
       }
+    } catch (err) {
+      setState({ error: err.message });
+    }
+  });
+}
+
+// Dernière étape : envoie le nouveau mot de passe choisi, accompagné du triplet
+// (phone, purpose, code) conservé dans state.awaiting depuis la demande initiale — c'est
+// ce triplet qui prouve côté serveur qu'un admin a bien autorisé CETTE demande précise
+// (voir completePasswordReset dans routes/auth.js). En cas de succès, l'utilisateur est
+// connecté directement (comme pour une inscription confirmée), sans repasser par l'écran
+// de connexion.
+function bindSetNewPasswordEvents() {
+  document.getElementById('back-to-login').addEventListener('click', () => {
+    setState({ authMode: 'login', awaiting: null, awaitingStatus: null, error: '', success: '' });
+  });
+  document.getElementById('set-new-password-form').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const fd = Object.fromEntries(new FormData(e.target).entries());
+    const a = state.awaiting || {};
+    try {
+      const data = await api('/auth/reset-password/complete', {
+        method: 'POST',
+        body: { phone: a.phone, code: a.code, newPassword: fd.newPassword }
+      });
+      await completeLogin(data.token, data.user);
     } catch (err) {
       setState({ error: err.message });
     }

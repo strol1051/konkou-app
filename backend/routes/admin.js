@@ -1,7 +1,7 @@
 import crypto from 'node:crypto';
 import db from '../db.js';
 import { signToken } from '../utils.js';
-import { adminConfirmOtp, listPendingOtps, rejectOtp } from '../otp.js';
+import { adminConfirmOtp, listPendingOtps, rejectOtp, buildWhatsappLinkToPhone } from '../otp.js';
 import { getAgentCapitalFeePercent, formatAgentNumber, fullAgentCode, computeReimbursementStatus } from './agents.js';
 
 // Single shared password for the person(s) running the cash pickup point. Fine for a
@@ -104,6 +104,16 @@ export function confirmPhoneVerification(body) {
   return { status: 200, data: { message: 'Numéro confirmé — le compte est activé.' } };
 }
 
+// Depuis la refonte de juillet 2026 (même principe que confirmPhoneVerification), cette
+// fonction n'applique PLUS de mot de passe : la demande ne contient plus de mot de passe du
+// tout (voir forgotPassword() dans routes/auth.js), donc il n'y a rien à appliquer. Elle se
+// contente d'AUTORISER la demande — adminConfirmOtp() marque la ligne OTP "used", ce que
+// consumeConfirmedOtp() (voir otp.js) exige plus tard pour laisser le joueur/agent poser son
+// nouveau mot de passe via /auth/reset-password/complete. On renvoie aussi un lien wa.me
+// PRÊT À ENVOYER vers le numéro du joueur/agent (buildWhatsappLinkToPhone) : comme Konkou n'a
+// pas d'API WhatsApp Business, c'est à l'opérateur de taper sur ce lien pour prévenir la
+// personne depuis son propre WhatsApp qu'elle peut revenir dans l'app choisir son nouveau
+// mot de passe — voir renderVerificationsSection()/confirmVerification() dans admin.js.
 export function confirmPasswordReset(body) {
   const { phone, code } = body || {};
   if (!phone) return { status: 400, data: { error: 'Numéro requis' } };
@@ -115,14 +125,20 @@ export function confirmPasswordReset(body) {
   const user = db.prepare('SELECT id FROM users WHERE phone = ?').get(phone);
   if (!user) return { status: 404, data: { error: 'Compte introuvable' } };
 
-  let payload = {};
-  try { payload = JSON.parse(result.row.payload || '{}'); } catch { /* ignore malformed payload */ }
-  if (!payload.passwordHash) {
-    return { status: 400, data: { error: 'Données de réinitialisation manquantes pour cette demande' } };
-  }
+  const whatsappReplyLink = buildWhatsappLinkToPhone(
+    phone,
+    'Konkou — Votre demande de réinitialisation de mot de passe est autorisée. Ouvrez l’application Konkou et entrez votre nouveau mot de passe.'
+  );
 
-  db.prepare('UPDATE users SET password_hash = ?, phone_verified = 1 WHERE id = ?').run(payload.passwordHash, user.id);
-  return { status: 200, data: { message: 'Mot de passe réinitialisé.' } };
+  return {
+    status: 200,
+    data: {
+      message: whatsappReplyLink
+        ? 'Demande autorisée — envoyez le message WhatsApp pré-rempli pour prévenir la personne.'
+        : "Demande autorisée — aucun numéro WhatsApp opérateur configuré, prévenez la personne par un autre moyen.",
+      whatsappReplyLink
+    }
+  };
 }
 
 export function rejectPhoneVerification(body) {

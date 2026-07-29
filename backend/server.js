@@ -236,6 +236,21 @@ const server = http.createServer(async (req, res) => {
       return sendJson(res, status, data);
     }
 
+    // Dernière étape de la réinitialisation (voir completePasswordReset dans
+    // routes/auth.js) : appelé une fois qu'un admin a autorisé la demande dans
+    // "Vérifications" — pas de header d'authentification, le triplet (phone, purpose,
+    // code) déjà détenu par le frontend fait office de preuve, comme pour verify-status.
+    // Même limite de débit que forgot-password/resend-otp : un compte cible ne peut pas
+    // être bombardé de tentatives même si le triplet venait à être deviné.
+    if (pathname === '/api/auth/reset-password/complete' && method === 'POST') {
+      if (tooManyRequests(req, res, 'reset-password-complete', {
+        ipMax: 10, ipWindowMs: 60 * 60 * 1000,
+        targetKey: body?.phone ? String(body.phone).trim() : null, targetMax: 5, targetWindowMs: 60 * 60 * 1000
+      })) return;
+      const { status, data } = await authRoutes.completePasswordReset(body);
+      return sendJson(res, status, data);
+    }
+
     if (pathname === '/api/games/trivia' && method === 'GET') {
       const userId = requireAuth(req, res); if (userId == null) return;
       if (blockIfAgent(req, res, userId)) return;

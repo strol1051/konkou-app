@@ -34,6 +34,19 @@ function buildWhatsappLink(phone, code, message) {
   return `https://wa.me/${operatorNumber}?text=${encodeURIComponent(text)}`;
 }
 
+// Sens inverse de buildWhatsappLink() ci-dessus : celui-là construit un lien qui part du
+// téléphone du joueur/agent vers l'opérateur (pour la demande initiale) ; celui-ci construit
+// un lien qui part du panneau admin vers le téléphone du joueur/agent (pour que l'opérateur,
+// une fois une demande approuvée, puisse prévenir la personne par un simple tap — toujours
+// sans API WhatsApp Business, juste un lien wa.me pré-rempli que l'admin envoie lui-même
+// depuis son propre WhatsApp). Les numéros Konkou sont déjà stockés au format "509XXXXXXXX"
+// (E.164 sans le +), exactement ce que wa.me attend comme destinataire — pas de reformatage
+// nécessaire ici, contrairement à OPERATOR_WHATSAPP_NUMBER qui est une variable d'env séparée.
+export function buildWhatsappLinkToPhone(phone, message) {
+  if (!phone) return null;
+  return `https://wa.me/${phone}?text=${encodeURIComponent(message)}`;
+}
+
 // Creates a fresh OTP for (phone, purpose), invalidating any earlier unused code for the same
 // pair. `payload` is an optional string stashed alongside the code (used by password reset to
 // hold the new hashed password until an admin confirms). Returns { ok, error, code, whatsappLink }.
@@ -115,6 +128,29 @@ export function rejectOtp(phone, purpose) {
     `SELECT id FROM otp_codes WHERE phone = ? AND purpose = ? AND used = 0 ORDER BY id DESC LIMIT 1`
   ).get(phone, purpose);
   if (!row) return { ok: false, error: 'Aucune demande en attente pour ce numéro' };
+
+  db.prepare('DELETE FROM otp_codes WHERE id = ?').run(row.id);
+  return { ok: true };
+}
+
+// Utilisé par la toute dernière étape de la réinitialisation de mot de passe (voir
+// completePasswordReset() dans routes/auth.js) : une fois qu'un admin a approuvé la
+// demande (adminConfirmOtp l'a déjà marquée used=1), c'est CE row-là qui prouve que
+// (a) une demande a bien été faite pour ce téléphone et (b) un admin l'a authentifiée —
+// exactement le même niveau de preuve que pour /auth/verify-status. On exige used=1 (pas
+// used=0) : si la ligne existe encore mais n'a pas été confirmée par un admin, c'est que
+// l'approbation n'a pas encore eu lieu, et il ne faut surtout pas laisser quelqu'un poser
+// un nouveau mot de passe avant cette étape (ce serait recréer exactement le problème que
+// cette refonte corrige). La ligne est supprimée après usage — comme rejectOtp(), plutôt
+// que "used" à nouveau (il n'y a pas de 3e état) — pour empêcher un double-appel de rejouer
+// la même confirmation et changer le mot de passe une seconde fois avec un lien/onglet resté
+// ouvert.
+export function consumeConfirmedOtp(phone, purpose, code) {
+  const row = db.prepare(
+    `SELECT id, used FROM otp_codes WHERE phone = ? AND purpose = ? AND code = ? ORDER BY id DESC LIMIT 1`
+  ).get(phone, purpose, String(code || ''));
+  if (!row) return { ok: false, error: 'Aucune demande en cours pour ce numéro — recommencez depuis "Mot de passe oublié"' };
+  if (!row.used) return { ok: false, error: "Cette demande n'a pas encore été approuvée par un administrateur — patientez ou relancez une demande" };
 
   db.prepare('DELETE FROM otp_codes WHERE id = ?').run(row.id);
   return { ok: true };

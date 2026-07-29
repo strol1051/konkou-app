@@ -1490,6 +1490,16 @@ async function confirmVerification(phone, code) {
     const path = state.verifyPurpose === 'verify_phone' ? '/admin/verifications/confirm-phone' : '/admin/verifications/confirm-reset';
     const data = await api(path, { method: 'POST', body: { phone, code: trimmedCode } });
     setState({ success: data.message, error: '' });
+    // Pour une réinitialisation de mot de passe (depuis la refonte de juillet 2026), la
+    // confirmation n'applique plus rien elle-même — elle AUTORISE seulement la demande
+    // (voir confirmPasswordReset dans routes/admin.js). C'est à l'opérateur de prévenir la
+    // personne pour qu'elle revienne choisir son nouveau mot de passe dans l'app ; comme
+    // Konkou n'a pas d'API WhatsApp Business, on ouvre directement le lien wa.me pré-rempli
+    // renvoyé par le serveur (même mécanique que renderContactForm côté joueur) plutôt que
+    // de forcer l'opérateur à recopier un numéro et un message à la main.
+    if (data.whatsappReplyLink) {
+      window.open(data.whatsappReplyLink, '_blank');
+    }
     loadVerifications();
   } catch (err) {
     setState({ error: err.message });

@@ -1,7 +1,7 @@
 import crypto from 'node:crypto';
 import db from '../db.js';
 import { hashPassword, verifyPassword, signToken, PASSWORD_RE, PASSWORD_REQUIREMENTS_MESSAGE, calcAge } from '../utils.js';
-import { issueOtp, checkOtpStatus } from '../otp.js';
+import { issueOtp, checkOtpStatus, consumeConfirmedOtp } from '../otp.js';
 
 function makeReferralCode(name) {
   const base = (name || 'user').replace(/[^a-zA-Z]/g, '').slice(0, 4).toUpperCase() || 'USER';
@@ -156,33 +156,34 @@ export async function resendOtp(body) {
   const user = db.prepare('SELECT id FROM users WHERE phone = ?').get(phone);
   if (!user) return { status: 404, data: { error: 'Compte introuvable' } };
 
-  // A pending password reset carries the user's chosen new (hashed) password as payload —
-  // preserve it across a resend, otherwise re-issuing without it would lose that password.
-  let payload = null;
-  if (purpose === 'reset_password') {
-    const prev = db.prepare(
-      `SELECT payload FROM otp_codes WHERE phone = ? AND purpose = 'reset_password' ORDER BY id DESC LIMIT 1`
-    ).get(phone);
-    payload = prev?.payload || null;
-    if (!payload) return { status: 400, data: { error: 'Aucune demande de réinitialisation en cours — recommencez depuis "Mot de passe oublié"' } };
-  }
-
+  // Depuis la refonte de juillet 2026, une demande de réinitialisation ne transporte plus
+  // de mot de passe (voir forgotPassword ci-dessous) — il n'y a donc plus de payload à
+  // préserver d'une demande à l'autre, contrairement à l'ancien comportement. Un simple
+  // nouvel OTP "vide" suffit dans les deux cas (inscription comme réinitialisation).
   const message = purpose === 'verify_phone'
     ? 'Confirmez la création de mon compte Konkou.'
-    : 'Confirmez la réinitialisation de mon mot de passe Konkou.';
-  const otp = await issueOtp(phone, purpose, message, payload);
+    : 'Confirmez ma demande de réinitialisation de mot de passe Konkou.';
+  const otp = await issueOtp(phone, purpose, message);
   if (!otp.ok) return { status: 429, data: { error: otp.error } };
 
   return { status: 200, data: { message: 'Nouvelle demande envoyée.', code: otp.code, whatsappLink: otp.whatsappLink } };
 }
 
+// Depuis la refonte de juillet 2026, la réinitialisation de mot de passe suit exactement
+// le même principe que l'inscription (voir register() ci-dessus) : une demande ne fait que
+// DEMANDER une réinitialisation — elle ne contient plus le nouveau mot de passe. Celui-ci
+// n'est saisi que plus tard, une fois qu'un admin a authentifié la demande dans l'onglet
+// "Vérifications" du panneau admin (voir confirmPasswordReset() dans routes/admin.js) et
+// que le joueur/agent revient dans l'app pour choisir son nouveau mot de passe (voir
+// completePasswordReset() ci-dessous). Avant cette refonte, le mot de passe était choisi
+// et haché DÈS cette étape-ci, ce qui obligeait l'admin à faire confiance à un mot de passe
+// déjà posé par n'importe qui prétendant être le titulaire du numéro — la nouvelle séquence
+// (demande → autorisation admin → saisie du mot de passe) ferme cette fenêtre en confirmant
+// l'identité AVANT de laisser qui que ce soit poser un nouveau mot de passe.
 export async function forgotPassword(body) {
-  const { phone, newPassword } = body || {};
-  if (!phone || !newPassword) {
-    return { status: 400, data: { error: 'Numéro de téléphone et nouveau mot de passe requis' } };
-  }
-  if (!PASSWORD_RE.test(newPassword)) {
-    return { status: 400, data: { error: PASSWORD_REQUIREMENTS_MESSAGE } };
+  const { phone } = body || {};
+  if (!phone) {
+    return { status: 400, data: { error: 'Numéro de téléphone requis' } };
   }
 
   const user = db.prepare('SELECT id FROM users WHERE phone = ?').get(phone);
@@ -192,14 +193,13 @@ export async function forgotPassword(body) {
     return { status: 200, data: { message: 'Si ce numéro est enregistré, une demande de réinitialisation a été créée.' } };
   }
 
-  const payload = JSON.stringify({ passwordHash: hashPassword(newPassword) });
-  const otp = await issueOtp(phone, 'reset_password', 'Confirmez la réinitialisation de mon mot de passe Konkou.', payload);
+  const otp = await issueOtp(phone, 'reset_password', 'Confirmez ma demande de réinitialisation de mot de passe Konkou.');
   if (!otp.ok) return { status: 429, data: { error: otp.error } };
 
   return {
     status: 200,
     data: {
-      message: whatsappMessage(otp.whatsappLink, 'Confirmez via WhatsApp pour finaliser la réinitialisation.', 'Demande enregistrée'),
+      message: whatsappMessage(otp.whatsappLink, 'Confirmez via WhatsApp pour qu’un administrateur autorise votre demande.', 'Demande enregistrée'),
       phone,
       purpose: 'reset_password',
       code: otp.code,
@@ -209,7 +209,13 @@ export async function forgotPassword(body) {
 }
 
 // Polled by the frontend (no auth — the `code` param is the secret) while it waits for
-// an admin to confirm the WhatsApp message. Mints a session token once confirmed.
+// an admin to confirm the WhatsApp message. Pour une inscription (verify_phone), la
+// confirmation active directement le compte et connecte l'utilisateur. Pour une
+// réinitialisation (reset_password), la confirmation ne fait qu'AUTORISER la demande — il
+// n'y a pas encore de nouveau mot de passe à ce stade, donc pas de session à ouvrir tout de
+// suite (voir completePasswordReset ci-dessous, appelé une fois que le joueur/agent a
+// effectivement choisi son nouveau mot de passe) : le frontend doit basculer vers un
+// formulaire de saisie plutôt que de se connecter immédiatement.
 export function checkVerificationStatus(query) {
   const { phone, purpose, code } = query || {};
   if (!phone || !purpose || !code) return { status: 400, data: { error: 'Requête invalide' } };
@@ -219,9 +225,45 @@ export function checkVerificationStatus(query) {
   if (st === 'expired') return { status: 200, data: { status: 'expired' } };
   if (st === 'pending') return { status: 200, data: { status: 'pending' } };
 
+  if (purpose === 'reset_password') {
+    return { status: 200, data: { status: 'confirmed' } };
+  }
+
   const user = db.prepare('SELECT * FROM users WHERE phone = ?').get(phone);
   if (!user) return { status: 200, data: { status: 'invalid' } };
 
   const token = signToken({ userId: user.id }, process.env.JWT_SECRET);
   return { status: 200, data: { status: 'confirmed', token, user: publicUser(user) } };
+}
+
+// Dernière étape de la réinitialisation : appelée UNIQUEMENT après qu'un admin a autorisé la
+// demande (voir checkVerificationStatus ci-dessus et confirmPasswordReset dans
+// routes/admin.js). Le triplet (phone, purpose, code) déjà détenu par le frontend depuis la
+// demande initiale sert de preuve — exactement comme pour le polling — donc pas besoin d'un
+// jeton d'authentification séparé ici (l'utilisateur n'est justement pas encore connecté).
+// consumeConfirmedOtp() refuse tout appel tant que l'admin n'a pas confirmé, et supprime la
+// ligne après usage pour empêcher un rejeu (voir otp.js pour le détail des deux garanties).
+export async function completePasswordReset(body) {
+  const { phone, code, newPassword } = body || {};
+  if (!phone || !code || !newPassword) {
+    return { status: 400, data: { error: 'Numéro, code et nouveau mot de passe requis' } };
+  }
+  if (!PASSWORD_RE.test(newPassword)) {
+    return { status: 400, data: { error: PASSWORD_REQUIREMENTS_MESSAGE } };
+  }
+
+  const result = consumeConfirmedOtp(phone, 'reset_password', code);
+  if (!result.ok) return { status: 400, data: { error: result.error } };
+
+  const user = db.prepare('SELECT * FROM users WHERE phone = ?').get(phone);
+  if (!user) return { status: 404, data: { error: 'Compte introuvable' } };
+
+  const hash = hashPassword(newPassword);
+  db.prepare('UPDATE users SET password_hash = ? WHERE id = ?').run(hash, user.id);
+
+  // Connecte directement l'utilisateur avec son nouveau mot de passe, comme le fait déjà
+  // checkVerificationStatus pour une inscription confirmée — évite un aller-retour inutile
+  // vers l'écran de connexion juste après avoir choisi le mot de passe.
+  const token = signToken({ userId: user.id }, process.env.JWT_SECRET);
+  return { status: 200, data: { message: 'Mot de passe réinitialisé.', token, user: publicUser(user) } };
 }
