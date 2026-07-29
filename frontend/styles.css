@@ -445,6 +445,15 @@ textarea {
   background: rgba(210,16,52,0.25);
 }
 
+/* Feedback vert/rouge immédiat par question (juillet 2026, voir app.js renderGameScreen) :
+   le bouton répondu est désactivé le temps de la courte pause d'affichage — sans cette
+   règle, certains navigateurs (Safari notamment) estompent un <button disabled> par
+   défaut, ce qui rendrait les couleurs .correct/.wrong ci-dessus moins nettes. */
+.choice-btn:disabled {
+  opacity: 1;
+  cursor: default;
+}
+
 .progress-dots {
   display: flex;
   gap: 6px;

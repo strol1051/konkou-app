@@ -1151,6 +1151,12 @@ async function startGame(type, stake) {
       answers: [],
       result: null,
       submitting: false,
+      // Feedback vert/rouge immédiat par question (voir answerCurrent/checkAnswerServer) :
+      // `feedback` porte { value, correct } pendant la courte pause d'affichage juste après
+      // une réponse (null sinon) ; `answering` bloque tout double-clic pendant l'appel réseau
+      // + la pause, avant que la question suivante ne s'affiche.
+      feedback: null,
+      answering: false,
       timeLimitSeconds: data.timeLimitSeconds || null,
       // Fixé une seule fois au début de la partie — le compte à rebours affiché en
       // recalcule toujours à partir de cette échéance fixe, jamais réinitialisé question
@@ -1186,6 +1192,9 @@ async function startDailyChallengeGame(type) {
       answers: [],
       result: null,
       submitting: false,
+      // Voir le commentaire équivalent dans startGame() ci-dessus.
+      feedback: null,
+      answering: false,
       timeLimitSeconds: data.timeLimitSeconds || null,
       deadlineAt: data.timeLimitSeconds ? Date.now() + data.timeLimitSeconds * 1000 : null,
       usingBonusPlay: false,
@@ -1342,6 +1351,14 @@ function renderGameScreen(type) {
     ? `<p id="game-timer" style="text-align:center; font-size:44px; font-weight:900; letter-spacing:1px; color:var(--game-contrast); margin:0 0 10px; padding:10px 0; border-radius:16px; background:rgba(0,0,0,0.28);">⏱️ --:--</p>`
     : '';
 
+  // Feedback vert/rouge immédiat (juillet 2026) : g.feedback n'est posé que pendant la
+  // courte pause juste après avoir répondu (voir answerCurrent) — sur LA question qui vient
+  // d'être répondue, avant de passer à la suivante. Les boutons/le formulaire sont désactivés
+  // pendant cette pause (voir fb ? 'disabled' : '' ci-dessous et le remplacement du
+  // formulaire par un message pour le sprint) pour qu'un clic pendant la pause ne saute pas
+  // la question suivante par erreur.
+  const fb = g.feedback;
+
   if (type === 'trivia') {
     const q = g.items[idx];
     return `
@@ -1356,7 +1373,14 @@ function renderGameScreen(type) {
         <p style="color:var(--text); font-size:16px; font-weight:600;">${q.question}</p>
       </div>
       <div id="choices">
-        ${q.choices.map((c, i) => `<button class="choice-btn" data-choice="${i}">${c}</button>`).join('')}
+        ${q.choices.map((c, i) => {
+          // .correct/.wrong (styles.css) préexistaient mais n'étaient encore jamais posées
+          // par app.js avant ce feedback en direct — réutilisées ici plutôt que de dupliquer
+          // les mêmes couleurs en style inline.
+          const isPicked = fb && String(i) === String(fb.value);
+          const feedbackClass = isPicked ? (fb.correct ? ' correct' : ' wrong') : '';
+          return `<button class="choice-btn${feedbackClass}" data-choice="${i}" ${fb ? 'disabled' : ''}>${c}${isPicked ? (fb.correct ? ' ✅' : ' ❌') : ''}</button>`;
+        }).join('')}
       </div>
     `;
   }
@@ -1373,10 +1397,14 @@ function renderGameScreen(type) {
     <div class="card">
       <h2>Calcul ${idx + 1}/${total}</h2>
       <p style="font-size:28px; font-weight:800; text-align:center; color:var(--text);">${p.text} = ?</p>
-      <form id="puzzle-form">
-        <input name="answer" type="number" inputmode="numeric" placeholder="Votre réponse" autofocus required />
-        <button class="primary" type="submit">Valider</button>
-      </form>
+      ${fb ? `
+        <p style="text-align:center; font-size:20px; font-weight:800; color:${fb.correct ? 'var(--green)' : 'var(--red)'};">${fb.correct ? '✅ Bonne réponse !' : '❌ Mauvaise réponse'}</p>
+      ` : `
+        <form id="puzzle-form">
+          <input name="answer" type="number" inputmode="numeric" placeholder="Votre réponse" autofocus required />
+          <button class="primary" type="submit">Valider</button>
+        </form>
+      `}
     </div>
   `;
 }
@@ -1475,8 +1503,51 @@ function bindGameEvents() {
   }
 }
 
+function sleep(ms) {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+// Interroge le nouvel endpoint /games/check-answer pour savoir si LA réponse qui vient
+// d'être donnée est correcte, sans rien changer d'autre (ni points, ni mise, ni solde — la
+// notation réelle reste entièrement au moment de submitGame, voir checkAnswer() dans
+// backend/routes/games.js). Dégrade en silence sur une erreur réseau/serveur : on ne bloque
+// jamais la partie pour un simple problème d'affichage, la partie continue normalement sans
+// couleur cette fois-ci plutôt que de planter.
+async function checkAnswerServer(sessionToken, value) {
+  try {
+    return await api('/games/check-answer', { method: 'POST', body: { sessionToken, answer: value } });
+  } catch {
+    return null;
+  }
+}
+
+// Durée d'affichage de la couleur vert/rouge avant de passer à la question suivante — assez
+// longue pour être vue sans effort, assez courte pour ne pas ralentir une partie chronométrée
+// (voir TRIVIA_TIME_LIMIT_SECONDS/PUZZLE_TIME_LIMIT_SECONDS dans backend/routes/games.js).
+const ANSWER_FEEDBACK_DELAY_MS = 700;
+
 async function answerCurrent(value) {
   const g = state.game;
+  // g.answering bloque tout appel concurrent (double-clic pendant l'appel réseau ou la
+  // pause d'affichage qui suit) — sans lui, cliquer deux fois vite pousserait deux réponses
+  // pour la même question.
+  if (!g || g.answering) return;
+  g.answering = true;
+
+  const check = await checkAnswerServer(g.sessionToken, value);
+  g.feedback = check ? { value, correct: check.correct } : null;
+  render(); // affiche la couleur (si dispo) et désactive les contrôles le temps de la pause
+  await sleep(ANSWER_FEEDBACK_DELAY_MS);
+
+  // Course rare avec l'auto-soumission par expiration du minuteur (autoSubmitOnTimeout) :
+  // si le temps s'écoule pile pendant cette pause de 700ms sur la DERNIÈRE question, la
+  // partie peut déjà avoir été soumise (g.result posé) avant que ce sleep() ne se termine —
+  // dans ce cas, ne rien pousser/soumettre une seconde fois (submitGame a de toute façon son
+  // propre garde-fou g.submitting/g.result, mais autant ne pas non plus polluer g.answers).
+  if (!g || g.result) { if (g) g.answering = false; return; }
+
+  g.feedback = null;
+  g.answering = false;
   g.answers.push(value);
   if (g.index < g.items.length - 1) {
     g.index++;

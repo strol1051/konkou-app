@@ -295,6 +295,18 @@ const server = http.createServer(async (req, res) => {
       return sendJson(res, status, data);
     }
 
+    // Feedback vert/rouge immédiat, question par question (juillet 2026) — un seul
+    // endpoint pour les 4 variantes ci-dessus (quiz/sprint, normal/Défi du jour), voir
+    // gamesRoutes.checkAnswer. Purement additif pour l'affichage en direct, sans effet sur
+    // les points/la mise/le solde — la soumission finale (routes *submit ci-dessus) reste
+    // seule responsable de la notation réelle de la partie.
+    if (pathname === '/api/games/check-answer' && method === 'POST') {
+      const userId = requireAuth(req, res); if (userId == null) return;
+      if (blockIfAgent(req, res, userId)) return;
+      const { status, data } = gamesRoutes.checkAnswer(userId, body);
+      return sendJson(res, status, data);
+    }
+
     if (pathname === '/api/wallet' && method === 'GET') {
       const userId = requireAuth(req, res); if (userId == null) return;
       if (blockIfAgent(req, res, userId)) return;

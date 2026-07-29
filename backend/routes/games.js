@@ -519,6 +519,44 @@ function checkNotExpired(session) {
   return (Date.now() - session.createdAt) <= allowedMs;
 }
 
+// Feedback immédiat vert/rouge par question (juillet 2026) — le joueur voit tout de suite
+// si SA réponse était bonne ou mauvaise, sans attendre la fin de la partie. Fonctionne pour
+// les 4 variantes (quiz normal, sprint normal, quiz du Défi du jour, sprint du Défi du
+// jour) puisque toutes stockent leur session de la même façon dans activeSessions, avec un
+// correctAnswers[] déjà là pour le calcul final — pas besoin de dupliquer cette fonction
+// par jeu/mode.
+//
+// Volontairement "une seule vérification par question, dans l'ordre" : session.checkedCount
+// (nouveau compteur posé sur la session, jamais exposé au client) avance d'une unité à
+// chaque appel réussi, et l'index vérifié est TOUJOURS ce compteur — jamais un index fourni
+// par le client. Sans cette contrainte, un client pourrait interroger cet endpoint en
+// boucle avec des valeurs différentes sur LA MÊME question pour deviner la bonne réponse
+// par élimination (4 essais suffiraient pour un quiz à 4 choix) ; ici, une question déjà
+// vérifiée ne peut plus jamais l'être une seconde fois, exactement comme en jouant
+// normalement une question à la fois.
+//
+// Important : ceci ne remplace PAS la validation finale (submitTrivia/submitPuzzle/
+// submitDailyChallengeTrivia/submitDailyChallengePuzzle, qui continuent de noter le
+// tableau complet de réponses envoyé par le client à la fin) — cet endpoint est purement
+// additif pour l'affichage en direct, sans aucun effet sur les points/la mise/le solde.
+export function checkAnswer(userId, body) {
+  const { sessionToken, answer } = body || {};
+  const session = activeSessions.get(sessionToken);
+  if (!session || session.userId !== userId) {
+    return { status: 400, data: { error: 'Session de jeu invalide ou expirée' } };
+  }
+  if (!checkNotExpired(session)) {
+    return { status: 400, data: { error: 'Temps écoulé pour cette partie.' } };
+  }
+  const index = session.checkedCount || 0;
+  if (index >= session.correctAnswers.length) {
+    return { status: 409, data: { error: 'Toutes les questions de cette partie ont déjà été vérifiées.' } };
+  }
+  const correct = Number(answer) === session.correctAnswers[index];
+  session.checkedCount = index + 1;
+  return { status: 200, data: { correct, index, total: session.correctAnswers.length } };
+}
+
 // Calcule le score/points/mise d'une soumission — partagé par submitTrivia et
 // submitPuzzle. timedOutFlag vient du client (envoyé uniquement par l'auto-soumission à
 // l'expiration du minuteur, voir frontend/app.js) mais n'est honoré que si le serveur
