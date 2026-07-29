@@ -1,0 +1,138 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
+<meta name="theme-color" content="#00209F" />
+<title>Devenez Agent Konkou</title>
+<!-- Page publique, en dehors de l'app (pas de login requis) — pensée pour être partagée
+     comme un lien de recrutement (WhatsApp, Facebook, bouche-à-oreille) afin d'expliquer
+     à des aspirants agents comment fonctionne le rôle avant qu'ils ne s'inscrivent dans
+     l'app elle-même. Sert du même dossier frontend/ que le reste de l'app (voir
+     serveStatic() dans backend/server.js), donc accessible directement à l'adresse
+     https://konkouapp.com/devenir-agent.html sans aucune route backend supplémentaire. -->
+<link rel="icon" href="icon.png" type="image/png" />
+<link rel="apple-touch-icon" href="icon.png" />
+<link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <div class="auth-screen">
+    <div class="auth-logo">
+      <img src="logo.png" alt="Konkou" class="auth-logo-img" id="page-logo">
+      <div class="tagline">Devenez le point de service Konkou de votre quartier.</div>
+    </div>
+
+    <div class="card">
+      <h2>🧑‍💼 Devenez Agent Konkou</h2>
+      <p>Un agent Konkou est un point de service local : il revend des parties bonus et des points aux joueurs de son quartier, et il leur paie leurs retraits en espèces avec le code généré dans l'app. Vous n'avez pas besoin de connaître les jeux — seulement de tenir un petit point de service fiable, comme un point de recharge ou de transfert d'argent.</p>
+      <p><strong>Comment vous gagnez de l'argent.</strong> Chaque fois que vous payez le retrait d'un joueur, vous gardez une commission de 10% du montant payé. Cette commission s'accumule et vous est remboursée par l'administration selon le cycle que <em>vous</em> choisissez à l'inscription — tous les 8, 15 ou 22 jours, réglée sur votre numéro NatCash ou MonCash.</p>
+      <p><strong>Le capital de départ.</strong> Pour être activé, un capital de 7 500 HTG est déposé à notre bureau. Konkou en garde 10% (750 HTG) en frais d'activation ; les 6 750 HTG restants deviennent votre crédit personnel, que vous revendez ensuite aux joueurs sous forme de parties bonus ou de points. Ce crédit peut être renfloué (augmenté) au fil du temps, à mesure que votre activité grandit.</p>
+      <p><strong>Conditions pour candidater.</strong> Avoir 18 ans ou plus, fournir une pièce d'identité valide (Carte d'Identification Nationale, passeport ou permis de conduire), et disposer d'une adresse fixe où les joueurs peuvent venir faire leurs transactions en personne.</p>
+      <p><strong>Numéros NatCash/MonCash.</strong> Vous fournirez aussi deux numéros mobiles — un NatCash et un MonCash — à votre nom (ou à un nom que vous précisez au moment de l'inscription), utilisés uniquement pour le suivi et le versement de vos remboursements de commission.</p>
+      <p style="font-size:12px; color:var(--muted);">Les montants et pourcentages ci-dessus sont ceux appliqués actuellement par Konkou et peuvent évoluer — l'app affiche toujours les valeurs à jour au moment de votre inscription.</p>
+    </div>
+
+    <div class="card">
+      <h2>✅ Prêt(e) à vous lancer ?</h2>
+      <p>L'inscription complète (identité, pièce, capital, numéros NatCash/MonCash, cycle de remboursement) se fait directement dans l'app :</p>
+      <a class="primary" style="display:block; text-align:center; text-decoration:none;" href="https://konkouapp.com/" target="_blank" rel="noopener">
+        Ouvrir l'app et m'inscrire comme Agent
+      </a>
+      <p style="font-size:12px; color:var(--muted); margin-top:8px;">Une fois sur konkouapp.com, appuyez sur le bouton "🧑‍💼 Devenir Agent" sous l'écran de connexion.</p>
+    </div>
+
+    <div class="card">
+      <h2>💬 Une question avant de vous inscrire ?</h2>
+      <p>Écrivez-nous — votre message s'ouvrira dans WhatsApp, prêt à envoyer, et nous vous répondrons directement avec toutes les précisions dont vous avez besoin.</p>
+      <form id="agent-interest-form">
+        <input name="fullName" placeholder="Nom et prénom" required />
+        <input name="whatsapp" placeholder="Votre numéro WhatsApp (ex: 50937123456)" required />
+        <input name="city" placeholder="Votre ville (optionnel)" />
+        <textarea name="message" placeholder="Votre question (optionnel, 400 caractères max)" maxlength="400" rows="4"></textarea>
+        <button class="primary" type="submit">Envoyer</button>
+      </form>
+      <p id="form-status" style="font-size:13px; margin-top:8px;"></p>
+    </div>
+  </div>
+
+  <script>
+    // Reproduction volontairement allégée de applyThemeVars()/logoUrl (voir frontend/app.js)
+    // — cette page n'affiche que quelques cartes statiques, donc pas besoin de la logique
+    // complète de contraste adaptatif ni des particules de thème saisonnier ; seules les
+    // couleurs de marque et le logo éventuellement personnalisés par l'admin sont repris,
+    // pour que cette page de recrutement reste visuellement cohérente avec le reste de
+    // l'app même si un thème saisonnier ou des couleurs personnalisées sont actifs.
+    // ATTENTION : garder cette liste synchronisée avec l'objet THEMES de frontend/app.js
+    // si un thème y est ajouté/retiré/modifié.
+    const THEMES = {
+      default: {},
+      noel: { '--blue': '#7a0c0c', '--blue-2': '#0d3b1e', '--red': '#c9a227', '--bg': '#0d1210', '--card': '#17241c', '--card-2': '#1f3226' },
+      nouvel_an: { '--blue': '#1a1a1a', '--blue-2': '#3a2f00', '--red': '#f4c542', '--bg': '#0a0a0a', '--card': '#171512', '--card-2': '#221d15' },
+      ete: { '--blue': '#0077b6', '--blue-2': '#00b4d8', '--red': '#ff9f1c', '--bg': '#072a3a', '--card': '#0e3a4d', '--card-2': '#14495f' },
+      paques: { '--blue': '#6a4c93', '--blue-2': '#b298dc', '--red': '#ff8fa3', '--bg': '#1c1526', '--card': '#2a1f38', '--card-2': '#362848' },
+      gede: { '--blue': '#1a1a1a', '--blue-2': '#3d0a4f', '--red': '#9b30ff', '--bg': '#120a17', '--card': '#1e1224', '--card-2': '#2a1830' },
+      valentin: { '--blue': '#7a0e2b', '--blue-2': '#c9184a', '--red': '#ff4d6d', '--bg': '#1a0a10', '--card': '#2a121c', '--card-2': '#3a1826' },
+      rentree: { '--blue': '#0f4c3a', '--blue-2': '#1b6a4f', '--red': '#ffb703', '--bg': '#0a1f18', '--card': '#123527', '--card-2': '#1a4432' }
+    };
+
+    async function applyLiveTheme() {
+      try {
+        const res = await fetch('/api/theme');
+        const data = await res.json();
+        const root = document.documentElement.style;
+        ['--blue', '--blue-2', '--red', '--bg', '--card', '--card-2'].forEach(v => root.removeProperty(v));
+        const vars = THEMES[data.theme] || THEMES.default;
+        Object.entries(vars).forEach(([k, v]) => root.setProperty(k, v));
+        if (data.bgColor) root.setProperty('--bg', data.bgColor);
+        if (data.blueColor) root.setProperty('--blue', data.blueColor);
+        if (data.cardColor) root.setProperty('--card', data.cardColor);
+        if (data.logo) document.getElementById('page-logo').src = data.logo;
+      } catch {
+        // Hors-ligne ou API indisponible : la page reste lisible avec les couleurs par
+        // défaut de styles.css, ce n'est pas bloquant pour une page purement informative.
+      }
+    }
+    applyLiveTheme();
+
+    // Formulaire "question avant inscription" — même principe exact que "Nous contacter"
+    // dans l'app (voir bindContactEvents() dans frontend/app.js) : aucune authentification,
+    // le serveur (POST /api/contact, voir backend/routes/contact.js) ne fait que construire
+    // un lien wa.me pré-rempli vers le numéro configuré par l'admin — c'est la personne qui
+    // envoie elle-même le message depuis sa propre app WhatsApp. Le message envoyé est
+    // préfixé "[Devenir Agent]" pour que l'admin distingue ces demandes des messages de
+    // contact génériques dans son WhatsApp.
+    document.getElementById('agent-interest-form').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const fd = Object.fromEntries(new FormData(e.target).entries());
+      const btn = e.target.querySelector('button[type="submit"]');
+      const statusEl = document.getElementById('form-status');
+      btn.disabled = true;
+      statusEl.textContent = '';
+      try {
+        const parts = ['[Devenir Agent]'];
+        if (fd.city && fd.city.trim()) parts.push(`Ville : ${fd.city.trim()}`);
+        parts.push(fd.message && fd.message.trim() ? fd.message.trim() : "Je souhaite en savoir plus sur le rôle d'agent.");
+        const composedMessage = parts.join(' — ');
+
+        const res = await fetch('/api/contact', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ fullName: fd.fullName, whatsapp: fd.whatsapp, message: composedMessage })
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(data.error || 'Erreur inconnue');
+
+        window.open(data.whatsappLink, '_blank');
+        statusEl.style.color = 'var(--green)';
+        statusEl.textContent = 'Message prêt — envoyez-le depuis WhatsApp pour finaliser votre demande.';
+        e.target.reset();
+      } catch (err) {
+        statusEl.style.color = 'var(--red)';
+        statusEl.textContent = err.message;
+      } finally {
+        btn.disabled = false;
+      }
+    });
+  </script>
+</body>
+</html>
