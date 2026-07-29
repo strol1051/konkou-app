@@ -2,7 +2,7 @@ import crypto from 'node:crypto';
 import db from '../db.js';
 import { signToken } from '../utils.js';
 import { adminConfirmOtp, listPendingOtps, rejectOtp } from '../otp.js';
-import { getAgentCapitalFeePercent, formatAgentNumber, fullAgentCode } from './agents.js';
+import { getAgentCapitalFeePercent, formatAgentNumber, fullAgentCode, computeReimbursementStatus } from './agents.js';
 
 // Single shared password for the person(s) running the cash pickup point. Fine for a
 // one/few-person operation; if you have several agents who need distinct accountability
@@ -508,6 +508,104 @@ export function getAgentsGlobalReport(query) {
   };
 }
 
+// ---------- Remboursements de commission agent (NatCash/MonCash, juillet 2026) ----------
+// Chaque agent choisit à l'inscription/candidature un cycle de 8/15/22 jours (voir
+// agents.reimbursement_period_days et computeReimbursementStatus dans routes/agents.js) au
+// terme duquel l'admin lui doit ses commissions accumulées depuis le dernier remboursement
+// — versées hors app par NatCash ou MonCash, aux numéros fournis à l'inscription. Contrairement
+// aux dépôts/renflouements/achats VIP (initiés par l'agent, confirmés par l'admin une fois
+// l'argent physiquement reçu), c'est ici l'ADMIN qui doit à l'AGENT : il n'y a donc pas de
+// statut "pending" à valider, seulement un montant dû et une échéance que l'admin règle
+// quand il le souhaite (pas forcément pile à l'échéance — un remboursement anticipé reste
+// possible, voir confirmAgentReimbursement ci-dessous qui ne bloque jamais sur isDue).
+
+// Liste tous les agents actifs avec leur statut de remboursement courant, triés par
+// échéance la plus proche/dépassée en premier — l'admin voit d'abord qui est en retard ou
+// sur le point de l'être. Un agent qui vient d'être approuvé (jamais encore remboursé)
+// apparaît normalement, son cycle démarrant à son activation (approved_at).
+export function listAgentsReimbursementStatus() {
+  const rows = db.prepare(`
+    SELECT a.*, u.phone as user_phone FROM agents a JOIN users u ON u.id = a.user_id
+    WHERE a.status = 'active' ORDER BY a.agent_code ASC
+  `).all();
+
+  const withStatus = rows.map(a => ({
+    id: a.id,
+    fullCode: fullAgentCode(a.agent_code, a.id),
+    firstName: a.first_name,
+    lastName: a.last_name,
+    phone: a.user_phone,
+    natcashNumber: a.natcash_number,
+    natcashName: a.natcash_name,
+    moncashNumber: a.moncash_number,
+    moncashName: a.moncash_name,
+    reimbursement: computeReimbursementStatus(a)
+  })).filter(a => a.reimbursement); // agents actifs uniquement (filtré en SQL) => toujours non-null ici, garde-fou
+
+  withStatus.sort((a, b) => new Date(a.reimbursement.dueAt) - new Date(b.reimbursement.dueAt));
+
+  return { status: 200, data: { agents: withStatus } };
+}
+
+// Enregistre un remboursement déjà effectué en personne (virement NatCash ou MonCash) et
+// avance le cycle de l'agent — le montant remboursé est TOUJOURS la commission accumulée
+// depuis le dernier remboursement (jamais un montant libre saisi par l'admin), pour que
+// l'historique reste exactement traçable à des retraits réels. N'exige pas que l'échéance
+// soit dépassée (reimb.isDue) : un remboursement anticipé, ou un remboursement à 0 HTG pour
+// simplement clôturer un cycle sans activité, restent des choix légitimes de l'admin.
+export function confirmAgentReimbursement(body) {
+  const id = parseInt(body?.id, 10);
+  const method = body?.method;
+  if (!id) return { status: 400, data: { error: 'id requis' } };
+  if (!['natcash', 'moncash'].includes(method)) {
+    return { status: 400, data: { error: 'Méthode invalide (natcash ou moncash attendu)' } };
+  }
+
+  const agent = db.prepare('SELECT * FROM agents WHERE id = ?').get(id);
+  if (!agent) return { status: 404, data: { error: 'Agent introuvable' } };
+  if (agent.status !== 'active') return { status: 409, data: { error: "Cet agent n'est pas actif" } };
+
+  const reimb = computeReimbursementStatus(agent);
+  if (!reimb) return { status: 409, data: { error: 'Impossible de calculer le remboursement pour cet agent' } };
+
+  db.prepare(
+    `INSERT INTO agent_reimbursements (agent_id, period_start, period_end, commission_htg, withdrawals_count, withdrawals_htg, method)
+     VALUES (?, ?, datetime('now'), ?, ?, ?, ?)`
+  ).run(agent.id, reimb.cycleStartAt, reimb.commissionOwedHtg, reimb.withdrawalsCount, reimb.withdrawalsHtg, method);
+  // Avance le point de départ du cycle SUIVANT à maintenant — voir le commentaire sur
+  // last_reimbursed_at dans db.js.
+  db.prepare(`UPDATE agents SET last_reimbursed_at = datetime('now') WHERE id = ?`).run(agent.id);
+
+  const methodLabel = method === 'natcash' ? 'NatCash' : 'MonCash';
+  db.prepare('INSERT INTO transactions (user_id, type, amount, note) VALUES (?, ?, ?, ?)')
+    .run(agent.user_id, 'agent_reimbursement_paid', 0,
+      `Remboursement de commission (${methodLabel}) — ${reimb.commissionOwedHtg} HTG pour ${reimb.withdrawalsCount} retrait(s)`);
+
+  return {
+    status: 200,
+    data: {
+      message: `Remboursement de ${reimb.commissionOwedHtg} HTG enregistré via ${methodLabel}.`,
+      commissionHtg: reimb.commissionOwedHtg
+    }
+  };
+}
+
+// Historique récent (tous agents confondus) des remboursements déjà effectués — sert de
+// justificatif consultable côté admin, complémentaire au statut "en cours" ci-dessus.
+export function listRecentAgentReimbursements(limit = 50) {
+  const rows = db.prepare(`
+    SELECT r.id, r.agent_id, r.period_start, r.period_end, r.commission_htg, r.withdrawals_count, r.withdrawals_htg, r.method, r.created_at,
+           a.agent_code, a.first_name, a.last_name
+    FROM agent_reimbursements r
+    JOIN agents a ON a.id = r.agent_id
+    ORDER BY r.created_at DESC LIMIT ?
+  `).all(limit);
+  return {
+    status: 200,
+    data: { reimbursements: rows.map(r => ({ ...r, full_code: fullAgentCode(r.agent_code, r.agent_id) })) }
+  };
+}
+
 // ---------- Réinitialisation des données de test (avant lancement réel) ----------
 // Supprime TOUT ce qui vient des essais faits avant le vrai lancement : comptes joueur/
 // agent, transactions, dépôts, retraits, VIP, renflouements, sessions de jeu, codes de
@@ -540,7 +638,7 @@ export function resetTestData(body) {
   // "Enfants" avant "parents" — le schéma (voir db.js) ne déclare pas de contraintes FK
   // explicites, donc l'ordre ne casse rien techniquement, mais reste plus propre à lire.
   // "settings" est délibérément absente de cette liste.
-  const tables = ['transactions', 'game_sessions', 'otp_codes', 'cashouts', 'deposits', 'agent_refills', 'vip_purchases', 'agents', 'users'];
+  const tables = ['transactions', 'game_sessions', 'otp_codes', 'cashouts', 'deposits', 'agent_refills', 'agent_reimbursements', 'vip_purchases', 'agents', 'users'];
   for (const table of tables) {
     db.prepare(`DELETE FROM ${table}`).run();
   }

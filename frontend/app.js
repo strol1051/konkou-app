@@ -36,6 +36,33 @@ function phoneField(name) {
   `;
 }
 
+// Champs NatCash/MonCash + plan de remboursement (juillet 2026) — communs aux deux
+// parcours de création d'un compte agent (inscription autonome "Devenir Agent" et
+// candidature in-app depuis le Profil), factorisés ici pour ne jamais les faire diverger.
+// Les numéros réutilisent phoneField() (même préfixe +509 visuel que le téléphone
+// principal) — voir bindAgentRegisterEvents/bindAgentEvents plus bas pour le préfixage
+// "509" avant envoi, identique à celui déjà fait sur le champ "phone". Les noms sont
+// optionnels : laissés vides, le serveur utilise le nom complet de l'agent par défaut
+// (voir validateAgentReimbursementFields dans routes/agents.js).
+function agentReimbursementFieldsHtml() {
+  return `
+    <p style="font-size:12px; color:var(--muted); margin:10px 0 -4px;">Numéros NatCash et MonCash pour le suivi de vos remboursements de commission (à votre nom, ou à un nom que vous précisez) :</p>
+    <label style="display:block; font-size:12px; color:var(--muted); margin:6px 0 -6px;">Numéro NatCash</label>
+    ${phoneField('natcashNumber')}
+    <input name="natcashName" placeholder="Nom sur le compte NatCash (optionnel — vous par défaut)" />
+    <label style="display:block; font-size:12px; color:var(--muted); margin:6px 0 -6px;">Numéro MonCash</label>
+    ${phoneField('moncashNumber')}
+    <input name="moncashName" placeholder="Nom sur le compte MonCash (optionnel — vous par défaut)" />
+    <label style="display:block; font-size:12px; color:var(--muted); margin:6px 0 -6px;">Plan de remboursement de vos commissions</label>
+    <select name="reimbursementPeriodDays" required>
+      <option value="">Choisir un plan</option>
+      <option value="8">Tous les 8 jours</option>
+      <option value="15">Tous les 15 jours</option>
+      <option value="22">Tous les 22 jours</option>
+    </select>
+  `;
+}
+
 // Délégué sur #app (persiste à travers tous les re-rendus, contrairement aux listeners
 // posés dans les fonctions bindXEvents qui sont perdus à chaque innerHTML).
 APP.addEventListener('click', (e) => {
@@ -671,6 +698,7 @@ function renderAgentRegisterForm() {
         <input name="idNumber" placeholder="Numéro de la pièce" required />
         <input name="city" placeholder="Ville" required />
         <input name="address" placeholder="Adresse (où les joueurs viendront faire leurs transactions)" required />
+        ${agentReimbursementFieldsHtml()}
         <button class="primary" type="submit">Envoyer ma candidature</button>
       </form>
       <button class="link-btn" id="agent-register-back" style="margin-top:14px;">Retour à la connexion</button>
@@ -882,6 +910,10 @@ function bindAgentRegisterEvents() {
     e.preventDefault();
     const fd = Object.fromEntries(new FormData(e.target).entries());
     fd.phone = `509${fd.phone}`; // voir la note équivalente sur le formulaire joueur ci-dessus
+    // Même préfixage "509" que le téléphone principal pour les numéros NatCash/MonCash
+    // (voir agentReimbursementFieldsHtml, qui réutilise phoneField pour ces deux champs).
+    fd.natcashNumber = `509${fd.natcashNumber}`;
+    fd.moncashNumber = `509${fd.moncashNumber}`;
     try {
       const data = await api('/agents/register', { method: 'POST', body: fd });
       if (data.pendingVerification) {
@@ -2049,6 +2081,7 @@ function agentApplyFormHtml() {
         <input name="idNumber" placeholder="Numéro de la pièce" required />
         <input name="city" placeholder="Ville" required />
         <input name="address" placeholder="Adresse (où les joueurs viendront faire leurs transactions)" required />
+        ${agentReimbursementFieldsHtml()}
         <button class="primary" type="submit">Envoyer ma candidature</button>
       </form>
     </div>
@@ -2083,6 +2116,33 @@ function agentRejectedHtml(agent) {
   `;
 }
 
+// Carte "Remboursement de commission" (juillet 2026) — rappelle à l'agent les numéros
+// NatCash/MonCash qu'il a fournis, son plan (8/15/22 jours) et où il en est dans son cycle
+// actuel : combien l'admin lui doit déjà en commission depuis le dernier remboursement, et
+// dans combien de jours (ou depuis quand, si en retard) le prochain est dû. Purement
+// informatif côté agent — seul l'admin peut marquer un remboursement comme effectué (voir
+// /admin.html → Agents → Remboursements), l'agent ne peut ni le déclencher ni le confirmer
+// lui-même puisque c'est l'admin qui lui doit de l'argent, pas l'inverse.
+function agentReimbursementCardHtml(dash) {
+  const r = dash.reimbursement;
+  return `
+    <div class="card">
+      <h2>💸 Remboursement de commission</h2>
+      <p style="font-size:13px;">Plan choisi : <strong>tous les ${dash.reimbursementPeriodDays} jours</strong>, réglé par l'administration via NatCash ou MonCash.</p>
+      <div class="stat-row"><span>NatCash</span><span>${escapeHtml(dash.natcashNumber || '—')}${dash.natcashName ? ` (${escapeHtml(dash.natcashName)})` : ''}</span></div>
+      <div class="stat-row"><span>MonCash</span><span>${escapeHtml(dash.moncashNumber || '—')}${dash.moncashName ? ` (${escapeHtml(dash.moncashName)})` : ''}</span></div>
+      ${r ? `
+        <p style="margin-top:12px; font-size:14px;">Commission accumulée depuis le ${escapeHtml((r.cycleStartAt || '').slice(0, 10))}</p>
+        <p style="font-size:28px; font-weight:800; color:var(--text);">${r.commissionOwedHtg} HTG</p>
+        <p style="font-size:12px; color:var(--muted);">${r.withdrawalsCount} retrait(s) payé(s) cette période (${r.withdrawalsHtg} HTG remis aux joueurs).</p>
+        <p style="font-size:13px; font-weight:700; color:${r.isDue ? 'var(--red)' : 'var(--muted)'};">${r.isDue
+          ? "⏰ Remboursement dû — contactez l'administration si ce n'est pas encore réglé."
+          : `📅 Prochain remboursement dans ${r.daysRemaining} jour(s) (${(r.dueAt || '').slice(0, 10)}).`}</p>
+      ` : `<p style="font-size:13px; color:var(--muted); margin-top:10px;">Votre cycle de remboursement démarrera dès l'activation de votre compte.</p>`}
+    </div>
+  `;
+}
+
 function agentDashboardHtml(dash, commission) {
   const today = new Date().toISOString().slice(0, 10);
   const min = dash.activatedDate || commission?.activatedDate || undefined;
@@ -2107,6 +2167,7 @@ function agentDashboardHtml(dash, commission) {
       <p style="font-size:28px; font-weight:800; color:var(--text);">${commission?.commissionHtg ?? 0} HTG</p>
       <p style="font-size:12px; color:var(--muted);">${commission?.cashoutsCount ?? 0} retrait(s) payé(s) ${commission?.date ? 'ce jour-là' : 'au total'} · ${dash.commissionPercent}% par retrait, réglé hors app.</p>
     </div>
+    ${agentReimbursementCardHtml(dash)}
     <div class="card">
       <h2>Dépôts à confirmer</h2>
       ${dash.pendingDeposits.length === 0 ? '<p>Aucun dépôt en attente.</p>' : dash.pendingDeposits.map(d => `
@@ -2183,6 +2244,10 @@ function bindAgentEvents() {
     form.addEventListener('submit', async (e) => {
       e.preventDefault();
       const fd = Object.fromEntries(new FormData(e.target).entries());
+      // Voir la note équivalente sur le formulaire "Devenir Agent" (bindAgentRegisterEvents) —
+      // phoneField() n'affiche/ne soumet que les 8 chiffres locaux, le "509" est rajouté ici.
+      fd.natcashNumber = `509${fd.natcashNumber}`;
+      fd.moncashNumber = `509${fd.moncashNumber}`;
       try {
         const res = await api('/agents/apply', { method: 'POST', body: fd });
         agentForceForm = false;

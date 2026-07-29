@@ -135,7 +135,51 @@ CREATE TABLE IF NOT EXISTS agents (
   -- var changes afterward. Powers the revenue summary in /admin.html.
   platform_fee_htg REAL NOT NULL DEFAULT 0,
   applied_at TEXT DEFAULT (datetime('now')),
-  approved_at TEXT
+  approved_at TEXT,
+  -- Numéros NatCash/MonCash (juillet 2026) — fournis à l'inscription/candidature pour le
+  -- SUIVI DES REMBOURSEMENTS DE COMMISSION (voir agent_reimbursements plus bas), pas pour
+  -- les opérations de dépôt/retrait des joueurs (qui restent en espèces, voir "Comment
+  -- fonctionne le retrait cash" dans README.md). "*_name" est optionnel : par défaut le
+  -- compte NatCash/MonCash est au nom de l'agent (first_name/last_name), mais l'agent peut
+  -- fournir un nom différent si le compte est à un tiers de confiance — voir
+  -- validateAgentReimbursementFields() dans routes/agents.js pour la valeur par défaut.
+  natcash_number TEXT,
+  natcash_name TEXT,
+  moncash_number TEXT,
+  moncash_name TEXT,
+  -- Cycle de remboursement choisi par l'agent à l'inscription (8, 15 ou 22 jours — voir
+  -- REIMBURSEMENT_PERIODS_DAYS dans routes/agents.js) : au bout de ce nombre de jours
+  -- depuis le dernier remboursement (ou depuis l'activation du compte s'il n'y en a jamais
+  -- eu), l'admin lui doit ses commissions accumulées sur la période — voir
+  -- computeReimbursementStatus() dans routes/agents.js. 15 jours par défaut si jamais omis.
+  reimbursement_period_days INTEGER NOT NULL DEFAULT 15,
+  -- Date du dernier remboursement effectué par l'admin (NULL tant qu'aucun remboursement
+  -- n'a encore eu lieu, auquel cas approved_at sert de point de départ du premier cycle —
+  -- voir computeReimbursementStatus()). Avance à chaque remboursement confirmé
+  -- (confirmAgentReimbursement() dans routes/admin.js), ce qui démarre automatiquement le
+  -- cycle suivant.
+  last_reimbursed_at TEXT
+);
+
+-- Historique des remboursements de commission effectués par l'admin à un agent, par
+-- virement NatCash/MonCash (juillet 2026) — voir le commentaire sur reimbursement_period_days
+-- ci-dessus. Contrairement aux dépôts/renflouements (initiés par l'agent, puis confirmés par
+-- l'admin), c'est ici l'ADMIN qui doit de l'argent à l'AGENT : chaque ligne représente donc
+-- un remboursement DÉJÀ effectué (pas une demande "pending" à confirmer plus tard), servant
+-- de justificatif/historique consultable. period_start/period_end bornent exactement la
+-- fenêtre de retraits couverte (commission_htg = somme de cashouts.commission_htg des
+-- retraits payés par cet agent dans cette fenêtre, voir getAgentsGlobalReport pour le même
+-- calcul appliqué à une période arbitraire plutôt qu'au cycle propre de l'agent).
+CREATE TABLE IF NOT EXISTS agent_reimbursements (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  agent_id INTEGER NOT NULL,
+  period_start TEXT NOT NULL,
+  period_end TEXT NOT NULL,
+  commission_htg REAL NOT NULL,
+  withdrawals_count INTEGER NOT NULL DEFAULT 0,
+  withdrawals_htg REAL NOT NULL DEFAULT 0,
+  method TEXT NOT NULL, -- 'natcash' | 'moncash'
+  created_at TEXT DEFAULT (datetime('now'))
 );
 
 -- Additional capital an already-active agent brings in later to grow their resellable
@@ -310,7 +354,19 @@ for (const stmt of [
   // Voir le commentaire sur la colonne birth_date dans la table users ci-dessus — même
   // logique que pour bonus_plays/vip_until : les bases créées avant cette migration
   // rattrapent la colonne, NULL pour tous les comptes existants.
-  "ALTER TABLE users ADD COLUMN birth_date TEXT"
+  "ALTER TABLE users ADD COLUMN birth_date TEXT",
+  // Voir les commentaires sur ces colonnes dans la table agents ci-dessus (NatCash/MonCash
+  // + plan de remboursement, juillet 2026). Les agents déjà actifs avant cette migration
+  // gardent natcash_number/moncash_number à NULL (à compléter manuellement si besoin, hors
+  // app) et reimbursement_period_days au défaut de 15 jours, last_reimbursed_at NULL — leur
+  // premier cycle démarrera donc depuis leur date d'activation (approved_at), comme pour un
+  // agent qui vient tout juste d'être approuvé.
+  "ALTER TABLE agents ADD COLUMN natcash_number TEXT",
+  "ALTER TABLE agents ADD COLUMN natcash_name TEXT",
+  "ALTER TABLE agents ADD COLUMN moncash_number TEXT",
+  "ALTER TABLE agents ADD COLUMN moncash_name TEXT",
+  "ALTER TABLE agents ADD COLUMN reimbursement_period_days INTEGER NOT NULL DEFAULT 15",
+  "ALTER TABLE agents ADD COLUMN last_reimbursed_at TEXT"
 ]) {
   try { db.exec(stmt); } catch { /* column already exists */ }
 }

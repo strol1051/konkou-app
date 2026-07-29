@@ -15,6 +15,45 @@ const ID_TYPES = ['cin', 'passeport', 'permis'];
 // Même format que routes/auth.js register() — voir le commentaire là-bas.
 const PHONE_RE = /^509\d{8}$/;
 
+// Cycles de remboursement de commission proposés à l'agent lors de son inscription/
+// candidature (juillet 2026) — voir le commentaire sur agents.reimbursement_period_days
+// dans db.js. Liste fermée (pas de valeur libre) pour que le calcul de la prochaine
+// échéance (computeReimbursementStatus ci-dessous) et l'affichage admin restent simples et
+// prévisibles.
+export const REIMBURSEMENT_PERIODS_DAYS = [8, 15, 22];
+
+// Valide et normalise les numéros NatCash/MonCash + le plan de remboursement choisi —
+// communs aux deux parcours de création d'un compte agent (applyAgent, l'candidature
+// in-app d'un joueur déjà inscrit, et registerAgent, l'inscription autonome dédiée). Un
+// seul endroit pour cette règle, même principe que PASSWORD_RE dans utils.js.
+// "*_name" est optionnel : un agent qui laisse le champ vide voit son propre nom complet
+// utilisé par défaut (le compte NatCash/MonCash est alors présumé être à son nom) — sinon
+// la valeur fournie est gardée telle quelle, pour le cas où le compte est au nom d'un
+// tiers de confiance.
+function validateAgentReimbursementFields(body, fullName) {
+  const { natcashNumber, natcashName, moncashNumber, moncashName, reimbursementPeriodDays } = body || {};
+  if (!natcashNumber || !moncashNumber) {
+    return { error: 'Numéro NatCash et numéro MonCash requis (pour le suivi des remboursements de commission)' };
+  }
+  if (!PHONE_RE.test(natcashNumber)) {
+    return { error: 'Numéro NatCash invalide (8 chiffres attendus après le +509)' };
+  }
+  if (!PHONE_RE.test(moncashNumber)) {
+    return { error: 'Numéro MonCash invalide (8 chiffres attendus après le +509)' };
+  }
+  const periodDays = parseInt(reimbursementPeriodDays, 10);
+  if (!REIMBURSEMENT_PERIODS_DAYS.includes(periodDays)) {
+    return { error: `Plan de remboursement invalide (choisir ${REIMBURSEMENT_PERIODS_DAYS.join(', ')} jours)` };
+  }
+  return {
+    natcashNumber,
+    natcashName: (natcashName && String(natcashName).trim()) || fullName,
+    moncashNumber,
+    moncashName: (moncashName && String(moncashName).trim()) || fullName,
+    reimbursementPeriodDays: periodDays
+  };
+}
+
 function stripAccents(s) { return String(s || '').normalize('NFD').replace(/[̀-ͯ]/g, ''); }
 function onlyLetters(s) { return stripAccents(s).replace(/[^a-zA-Z]/g, '').toUpperCase(); }
 
@@ -62,6 +101,45 @@ function nextRefillCeiling(lastCapitalDepositHtg) {
   return Math.round(lastCapitalDepositHtg * (1 + growth / 100) * 100) / 100;
 }
 
+// Ce que l'admin doit actuellement à cet agent en commission, pour le cycle de
+// remboursement en cours (voir agents.reimbursement_period_days) — utilisé à la fois par
+// le tableau de bord de l'agent (pour qu'il suive lui-même son prochain remboursement) et
+// par l'interface admin (pour savoir combien et quand rembourser chaque agent). Retourne
+// null pour un agent pas encore actif : aucun cycle ne peut démarrer avant l'activation du
+// compte (voir approved_at), qui sert de point de départ du tout premier cycle.
+export function computeReimbursementStatus(agent) {
+  if (agent.status !== 'active' || !agent.approved_at) return null;
+  const periodDays = agent.reimbursement_period_days || 15;
+  // Le cycle en cours part du dernier remboursement effectué, ou de l'activation du compte
+  // si aucun remboursement n'a encore eu lieu — voir le commentaire sur last_reimbursed_at
+  // dans db.js. Chaque nouveau remboursement (confirmAgentReimbursement dans routes/admin.js)
+  // avance last_reimbursed_at, ce qui démarre automatiquement le cycle suivant à partir de là.
+  const cycleStartAt = agent.last_reimbursed_at || agent.approved_at;
+  const dueAt = new Date(new Date(cycleStartAt).getTime() + periodDays * 24 * 60 * 60 * 1000);
+  // Borne strictement supérieure (">" et non ">=") : last_reimbursed_at est fixé via
+  // datetime('now') au moment même où le remboursement précédent a été confirmé, à la même
+  // précision (la seconde) qu'un cashouts.processed_at qui aurait été posé la même seconde —
+  // un ">=" ferait alors compter deux fois un même retrait payé pile au moment du
+  // remboursement : une fois dans le cycle qui vient de se clôturer, une seconde fois dans
+  // le nouveau qui démarre exactement là. Avec ">", un tel retrait ne compte que dans le
+  // cycle où il a déjà été inclus au moment du calcul qui a précédé le remboursement.
+  const row = db.prepare(
+    `SELECT COALESCE(SUM(commission_htg), 0) as commission, COALESCE(SUM(net_payout_htg), 0) as withdrawals, COUNT(*) as count
+     FROM cashouts WHERE agent_id = ? AND status = 'paid' AND processed_at > ?`
+  ).get(agent.id, cycleStartAt);
+  const r2 = (n) => Math.round(n * 100) / 100;
+  return {
+    periodDays,
+    cycleStartAt,
+    dueAt: dueAt.toISOString(),
+    isDue: Date.now() >= dueAt.getTime(),
+    daysRemaining: Math.max(0, Math.ceil((dueAt.getTime() - Date.now()) / (24 * 60 * 60 * 1000))),
+    commissionOwedHtg: r2(row.commission),
+    withdrawalsCount: row.count,
+    withdrawalsHtg: r2(row.withdrawals)
+  };
+}
+
 function publicAgent(a) {
   return {
     agentNumber: formatAgentNumber(a.id),
@@ -79,7 +157,14 @@ function publicAgent(a) {
     lastCapitalDepositHtg: a.last_capital_deposit_htg,
     nextRefillCeilingHtg: nextRefillCeiling(a.last_capital_deposit_htg),
     appliedAt: a.applied_at,
-    approvedAt: a.approved_at
+    approvedAt: a.approved_at,
+    natcashNumber: a.natcash_number,
+    natcashName: a.natcash_name,
+    moncashNumber: a.moncash_number,
+    moncashName: a.moncash_name,
+    reimbursementPeriodDays: a.reimbursement_period_days,
+    lastReimbursedAt: a.last_reimbursed_at,
+    reimbursement: computeReimbursementStatus(a)
   };
 }
 
@@ -96,6 +181,9 @@ export function applyAgent(userId, body) {
   const age = calcAge(birthDate);
   if (age === null) return { status: 400, data: { error: 'Date de naissance invalide' } };
   if (age < 18) return { status: 400, data: { error: 'Vous devez avoir au moins 18 ans pour devenir agent' } };
+
+  const reimb = validateAgentReimbursementFields(body, `${firstName} ${lastName}`.trim());
+  if (reimb.error) return { status: 400, data: { error: reimb.error } };
 
   const existing = db.prepare('SELECT * FROM agents WHERE user_id = ?').get(userId);
   if (existing && existing.status !== 'rejected') {
@@ -115,14 +203,18 @@ export function applyAgent(userId, body) {
     // agent number (see formatAgentNumber) stays the one from their first-ever application.
     db.prepare(
       `UPDATE agents SET last_name=?, first_name=?, birth_date=?, id_type=?, id_number=?, city=?, address=?, agent_code=?,
-       status='pending', capital_htg=?, applied_at=datetime('now'), approved_at=NULL WHERE id=?`
-    ).run(lastName, firstName, birthDate, idType, String(idNumber).trim(), city, address, agentCode, capital, existing.id);
+       status='pending', capital_htg=?, applied_at=datetime('now'), approved_at=NULL,
+       natcash_number=?, natcash_name=?, moncash_number=?, moncash_name=?, reimbursement_period_days=? WHERE id=?`
+    ).run(lastName, firstName, birthDate, idType, String(idNumber).trim(), city, address, agentCode, capital,
+      reimb.natcashNumber, reimb.natcashName, reimb.moncashNumber, reimb.moncashName, reimb.reimbursementPeriodDays, existing.id);
     agentId = existing.id;
   } else {
     const info = db.prepare(
-      `INSERT INTO agents (user_id, last_name, first_name, birth_date, id_type, id_number, city, address, agent_code, capital_htg)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-    ).run(userId, lastName, firstName, birthDate, idType, String(idNumber).trim(), city, address, agentCode, capital);
+      `INSERT INTO agents (user_id, last_name, first_name, birth_date, id_type, id_number, city, address, agent_code, capital_htg,
+       natcash_number, natcash_name, moncash_number, moncash_name, reimbursement_period_days)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    ).run(userId, lastName, firstName, birthDate, idType, String(idNumber).trim(), city, address, agentCode, capital,
+      reimb.natcashNumber, reimb.natcashName, reimb.moncashNumber, reimb.moncashName, reimb.reimbursementPeriodDays);
     agentId = info.lastInsertRowid;
   }
 
@@ -187,12 +279,15 @@ export async function registerAgent(body) {
   if (age === null) return { status: 400, data: { error: 'Date de naissance invalide' } };
   if (age < 18) return { status: 400, data: { error: 'Vous devez avoir au moins 18 ans pour devenir agent' } };
 
+  const name = `${firstName} ${lastName}`.trim();
+  const reimb = validateAgentReimbursementFields(body, name);
+  if (reimb.error) return { status: 400, data: { error: reimb.error } };
+
   const existing = db.prepare('SELECT id, phone_verified FROM users WHERE phone = ?').get(phone);
   if (existing && existing.phone_verified) {
     return { status: 409, data: { error: 'Ce numéro est déjà enregistré' } };
   }
 
-  const name = `${firstName} ${lastName}`.trim();
   const hash = hashPassword(password);
   let userId;
 
@@ -218,14 +313,18 @@ export async function registerAgent(body) {
   const existingAgent = db.prepare('SELECT id FROM agents WHERE user_id = ?').get(userId);
   if (!existingAgent) {
     db.prepare(
-      `INSERT INTO agents (user_id, last_name, first_name, birth_date, id_type, id_number, city, address, agent_code, capital_htg)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-    ).run(userId, lastName, firstName, birthDate, idType, String(idNumber).trim(), city, address, agentCode, capital);
+      `INSERT INTO agents (user_id, last_name, first_name, birth_date, id_type, id_number, city, address, agent_code, capital_htg,
+       natcash_number, natcash_name, moncash_number, moncash_name, reimbursement_period_days)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    ).run(userId, lastName, firstName, birthDate, idType, String(idNumber).trim(), city, address, agentCode, capital,
+      reimb.natcashNumber, reimb.natcashName, reimb.moncashNumber, reimb.moncashName, reimb.reimbursementPeriodDays);
   } else {
     db.prepare(
       `UPDATE agents SET last_name=?, first_name=?, birth_date=?, id_type=?, id_number=?, city=?, address=?, agent_code=?,
-       status='pending', capital_htg=?, applied_at=datetime('now'), approved_at=NULL WHERE id=?`
-    ).run(lastName, firstName, birthDate, idType, String(idNumber).trim(), city, address, agentCode, capital, existingAgent.id);
+       status='pending', capital_htg=?, applied_at=datetime('now'), approved_at=NULL,
+       natcash_number=?, natcash_name=?, moncash_number=?, moncash_name=?, reimbursement_period_days=? WHERE id=?`
+    ).run(lastName, firstName, birthDate, idType, String(idNumber).trim(), city, address, agentCode, capital,
+      reimb.natcashNumber, reimb.natcashName, reimb.moncashNumber, reimb.moncashName, reimb.reimbursementPeriodDays, existingAgent.id);
   }
 
   const otp = await issueOtp(phone, 'verify_phone', 'Confirmez la création de mon compte agent Konkou.');
@@ -369,6 +468,16 @@ export function getAgentDashboard(userId) {
       nextRefillCeilingHtg: nextRefillCeiling(agent.last_capital_deposit_htg),
       refillFeePercent: getRefillFeePercent(),
       refillMinHtg: getRefillMinHtg(),
+      // NatCash/MonCash + cycle de remboursement (juillet 2026) — voir
+      // computeReimbursementStatus ci-dessus. L'agent voit ici exactement ce que l'admin
+      // lui doit et depuis quand, sans avoir à demander : la même information alimente le
+      // tableau "Remboursements" côté admin (voir routes/admin.js, listAgentsReimbursementStatus).
+      natcashNumber: agent.natcash_number,
+      natcashName: agent.natcash_name,
+      moncashNumber: agent.moncash_number,
+      moncashName: agent.moncash_name,
+      reimbursementPeriodDays: agent.reimbursement_period_days,
+      reimbursement: computeReimbursementStatus(agent),
       pendingDeposits,
       pendingCashouts,
       pendingVip,

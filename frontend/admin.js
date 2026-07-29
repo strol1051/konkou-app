@@ -302,10 +302,12 @@ const state = {
   verifications: [],
   deposits: [],
   agents: [],
-  agentsView: 'list', // list | report — sous-onglet de la section "agents" (voir renderAgentsSection)
+  agentsView: 'list', // list | report | reimbursements — sous-onglet de la section "agents" (voir renderAgentsSection)
   agentsReport: null, // résultat de /admin/agents/report (Rapport global, tous agents)
   reportFrom: '', // borne basse (YYYY-MM-DD) du Rapport global ('' = depuis le début)
   reportTo: '', // borne haute (YYYY-MM-DD) du Rapport global ('' = jusqu'à aujourd'hui)
+  agentsReimbursements: null, // résultat de /admin/agents/reimbursements (statut du cycle en cours, par agent actif) — null tant que non chargé
+  agentsReimbursementsHistory: [], // résultat de /admin/agents/reimbursements/history (remboursements déjà effectués)
   refills: [],
   vip: [],
   revenue: null,
@@ -345,7 +347,7 @@ async function api(path, { method = 'GET', body } = {}) {
 
 function logout() {
   localStorage.removeItem('konkou_admin_token');
-  setState({ token: null, cashouts: [], verifications: [], deposits: [], agents: [], refills: [], vip: [], revenue: null, accountLookup: null, error: '', success: '' });
+  setState({ token: null, cashouts: [], verifications: [], deposits: [], agents: [], refills: [], vip: [], revenue: null, accountLookup: null, agentsReimbursements: null, agentsReimbursementsHistory: [], error: '', success: '' });
 }
 
 function render() {
@@ -573,20 +575,68 @@ function renderAgentsReport() {
   `;
 }
 
+// ---------- Remboursements de commission agent (NatCash/MonCash, juillet 2026) ----------
+// Chaque agent actif a un cycle de 8/15/22 jours (choisi à l'inscription) au terme duquel
+// l'admin lui doit ses commissions accumulées, réglées hors app par NatCash ou MonCash aux
+// numéros fournis à l'inscription — voir computeReimbursementStatus() dans
+// backend/routes/agents.js. Triés côté serveur par échéance la plus proche/dépassée en
+// premier ; un badge rouge signale les cycles déjà échus (isDue).
+function renderAgentsReimbursements() {
+  const list = state.agentsReimbursements;
+  const history = state.agentsReimbursementsHistory;
+  if (!list) return '<div class="center-msg">Chargement...</div>';
+  return `
+    <div class="card">
+      <h2>💸 Remboursements de commission</h2>
+      <p style="font-size:13px;">Chaque agent choisit un cycle de 8, 15 ou 22 jours à l'inscription. Le montant à rembourser est toujours la commission accumulée depuis le dernier remboursement (ou depuis l'activation du compte s'il n'y en a jamais eu) — jamais un montant libre.</p>
+    </div>
+    ${list.length === 0 ? '<div class="card"><p>Aucun agent actif.</p></div>' : list.map(a => {
+      const r = a.reimbursement;
+      return `
+      <div class="card" style="${r.isDue ? 'border-left-color: var(--red);' : ''}">
+        <h2>${escapeHtml(a.fullCode)} — ${escapeHtml(a.firstName)} ${escapeHtml(a.lastName)}</h2>
+        <p>Téléphone : ${escapeHtml(a.phone)} · Plan : tous les ${r.periodDays} jours</p>
+        <p>NatCash : <strong>${escapeHtml(a.natcashNumber || '—')}</strong>${a.natcashName ? ` (${escapeHtml(a.natcashName)})` : ''}</p>
+        <p>MonCash : <strong>${escapeHtml(a.moncashNumber || '—')}</strong>${a.moncashName ? ` (${escapeHtml(a.moncashName)})` : ''}</p>
+        <p>Cycle depuis le ${escapeHtml((r.cycleStartAt || '').slice(0, 10))} · ${r.withdrawalsCount} retrait(s) payé(s) (${r.withdrawalsHtg} HTG)</p>
+        <p style="font-size:20px; font-weight:800;">${r.commissionOwedHtg} HTG à rembourser</p>
+        <p style="font-size:13px; font-weight:700; color:${r.isDue ? 'var(--red)' : 'var(--muted)'};">${r.isDue ? `⏰ Échu depuis le ${(r.dueAt || '').slice(0, 10)}` : `📅 Échéance le ${(r.dueAt || '').slice(0, 10)} (dans ${r.daysRemaining} jour(s))`}</p>
+        <div class="grid-2" style="margin-top:10px;">
+          <button class="tile" data-reimburse="${a.id}" data-reimburse-method="natcash" style="background:rgba(34,197,94,0.2); font-size:13px;">✅ Rembourser via NatCash</button>
+          <button class="tile" data-reimburse="${a.id}" data-reimburse-method="moncash" style="background:rgba(34,197,94,0.2); font-size:13px;">✅ Rembourser via MonCash</button>
+        </div>
+      </div>
+    `; }).join('')}
+    ${history.length > 0 ? `
+      <div class="card">
+        <h2>Historique récent</h2>
+        ${history.map(h => `
+          <div class="tx-row">
+            <span>${escapeHtml(h.full_code)} — ${escapeHtml(h.first_name)} ${escapeHtml(h.last_name)} · ${h.method === 'natcash' ? 'NatCash' : 'MonCash'}</span>
+            <span>${h.commission_htg} HTG (${escapeHtml((h.created_at || '').slice(0, 10))})</span>
+          </div>
+        `).join('')}
+      </div>
+    ` : ''}
+  `;
+}
+
 // ---------- Candidatures Agent ----------
 const ID_TYPE_LABELS = { cin: "Carte d'Identification Nationale", passeport: 'Passeport', permis: 'Permis de conduire' };
 
 function renderAgentsSection() {
   const tabs = [['pending', 'En attente'], ['active', 'Actifs'], ['rejected', 'Rejetés']];
   const tabsHtml = `
-    <div class="grid-2" style="grid-template-columns: repeat(4, 1fr); margin-top:14px;">
+    <div class="grid-2" style="grid-template-columns: repeat(5, 1fr); margin-top:14px;">
       ${tabs.map(([key, label]) => `
         <button class="tile" data-agent-filter="${key}" style="font-size:13px; ${state.agentsView === 'list' && state.statusFilter === key ? 'outline:2px solid var(--green);' : ''}">${label}</button>
       `).join('')}
       <button class="tile" data-agent-filter="report" style="font-size:13px; ${state.agentsView === 'report' ? 'outline:2px solid var(--green);' : ''}">📋 Rapport global</button>
+      <button class="tile" data-agent-filter="reimbursements" style="font-size:13px; ${state.agentsView === 'reimbursements' ? 'outline:2px solid var(--green);' : ''}">💸 Remboursements</button>
     </div>
   `;
   if (state.agentsView === 'report') return tabsHtml + renderAgentsReport();
+  if (state.agentsView === 'reimbursements') return tabsHtml + renderAgentsReimbursements();
   return tabsHtml + `
     ${state.agents.length === 0 ? `<div class="card"><p>Aucune candidature "${statusLabel(state.statusFilter)}".</p></div>` : state.agents.map(a => `
       <div class="card">
@@ -876,6 +926,7 @@ async function loadVipPurchases() {
 
 async function loadAgents() {
   if (state.agentsView === 'report') return loadAgentsReport();
+  if (state.agentsView === 'reimbursements') return loadAgentsReimbursements();
   setState({ loading: true, error: '' });
   try {
     const data = await api(`/admin/agents?status=${state.statusFilter}`);
@@ -898,6 +949,32 @@ async function loadAgentsReport() {
   } catch (err) {
     if (err.status === 401) { logout(); return; }
     setState({ error: err.message, loading: false });
+  }
+}
+
+async function loadAgentsReimbursements() {
+  setState({ loading: true, error: '' });
+  try {
+    const [status, history] = await Promise.all([
+      api('/admin/agents/reimbursements'),
+      api('/admin/agents/reimbursements/history')
+    ]);
+    setState({ agentsReimbursements: status.agents, agentsReimbursementsHistory: history.reimbursements, loading: false });
+  } catch (err) {
+    if (err.status === 401) { logout(); return; }
+    setState({ error: err.message, loading: false });
+  }
+}
+
+async function actOnAgentReimbursement(id, method) {
+  const methodLabel = method === 'natcash' ? 'NatCash' : 'MonCash';
+  if (!confirm(`Confirmer avoir envoyé ce montant à l'agent par ${methodLabel} ?`)) return;
+  try {
+    const res = await api('/admin/agents/reimbursements/confirm', { method: 'POST', body: { id: Number(id), method } });
+    setState({ success: res.message, error: '' });
+    loadAgentsReimbursements();
+  } catch (err) {
+    setState({ error: err.message, success: '' });
   }
 }
 
@@ -1026,14 +1103,18 @@ function bind() {
   document.querySelectorAll('[data-agent-filter]').forEach(btn => {
     btn.addEventListener('click', () => {
       const key = btn.dataset.agentFilter;
-      if (key === 'report') {
-        state.agentsView = 'report';
+      if (key === 'report' || key === 'reimbursements') {
+        state.agentsView = key;
       } else {
         state.agentsView = 'list';
         state.statusFilter = key;
       }
       loadAgents();
     });
+  });
+
+  document.querySelectorAll('[data-reimburse]').forEach(btn => {
+    btn.addEventListener('click', () => actOnAgentReimbursement(btn.dataset.reimburse, btn.dataset.reimburseMethod));
   });
   document.querySelectorAll('[data-agent-approve]').forEach(btn => {
     btn.addEventListener('click', () => actOnAgent(btn.dataset.agentApprove, 'approve'));

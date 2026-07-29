@@ -571,6 +571,26 @@ const server = http.createServer(async (req, res) => {
       return sendJson(res, status, data);
     }
 
+    // Remboursements de commission agent (NatCash/MonCash, juillet 2026) — voir
+    // routes/admin.js pour le détail du cycle 8/15/22 jours choisi par chaque agent.
+    if (pathname === '/api/admin/agents/reimbursements' && method === 'GET') {
+      if (!requireAdmin(req, res)) return;
+      const { status, data } = adminRoutes.listAgentsReimbursementStatus();
+      return sendJson(res, status, data);
+    }
+
+    if (pathname === '/api/admin/agents/reimbursements/confirm' && method === 'POST') {
+      if (!requireAdmin(req, res)) return;
+      const { status, data } = adminRoutes.confirmAgentReimbursement(body);
+      return sendJson(res, status, data);
+    }
+
+    if (pathname === '/api/admin/agents/reimbursements/history' && method === 'GET') {
+      if (!requireAdmin(req, res)) return;
+      const { status, data } = adminRoutes.listRecentAgentReimbursements();
+      return sendJson(res, status, data);
+    }
+
     if (pathname === '/api/admin/vip' && method === 'GET') {
       if (!requireAdmin(req, res)) return;
       const { status, data } = adminRoutes.listVipPurchases(url.searchParams.get('status'));
