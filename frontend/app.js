@@ -532,6 +532,13 @@ async function completeLogin(token, user) {
     error: '',
     success: ''
   });
+  // Le login (/auth/login) et la confirmation WhatsApp (/auth/verify-status) ne renvoient
+  // qu'un user "minimal" (sans dailyChallenge, voir publicUser() dans routes/auth.js) —
+  // sans cet appel, la carte "Défi du jour" de l'accueil resterait bloquée sur son état de
+  // chargement (voir renderHome) jusqu'à une action qui rafraîchit le profil par ailleurs
+  // (ex: un retrait). On la complète ici tout de suite après la connexion, sans bloquer le
+  // premier rendu (déjà fait par setState ci-dessus) : refreshProfile fait son propre render().
+  if (!state.isAgent) refreshProfile();
 }
 
 async function refreshProfile() {
@@ -973,7 +980,12 @@ function renderHome() {
       <p style="font-size:13px; color:var(--muted); margin:0 0 8px;">Pas encore tenté — <strong style="color:var(--green);">+${dc.rewardPoints} pts</strong> si réussi, <strong style="color:var(--red);">-${dc.lossPercent}% du solde</strong> si échoué. Une seule tentative par jour.</p>
       <span class="panel-cta">Relever le défi <span aria-hidden="true">→</span></span>
     </button>
-    `) : ''}
+    `) : `
+    <div class="card glow-card">
+      <h2>🎯 Défi du jour</h2>
+      <p style="font-size:13px; color:var(--muted);">Chargement du statut du défi du jour...</p>
+    </div>
+    `}
     <div class="game-hub">
       <button class="game-panel" data-start="trivia">
         <div class="icon-badge">🧠</div>
