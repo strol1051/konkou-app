@@ -1008,7 +1008,7 @@ function renderHome() {
       <p>4. Plus de parties gratuites aujourd'hui ? Déposez chez l'agent pour des parties bonus (onglet Portefeuille) — cet argent achète des parties, il n'est pas retirable.</p>
       <p>5. Avant chaque partie, vous pouvez miser entre 100 et 2500 de vos points : score quasi parfait, la mise augmente jusqu'à 10% ; score faible, elle peut diminuer jusqu'à 75%. Optionnel — vous pouvez toujours jouer sans miser.</p>
       <p>6. Chaque partie est chronométrée (25 secondes) : le temps s'affiche pendant que vous jouez. Si le temps s'écoule avant la fin, la partie est perdue (0 point) et une mise éventuelle perd 50% — répondez avant la fin du compte à rebours !</p>
-      <p>7. Défi du jour : questions et calculs très difficiles, sans mise, une seule tentative par jour. Réussi (≥80% de bonnes réponses) → +150 pts. Échoué (score insuffisant ou temps écoulé) → -75% de votre solde de points.</p>
+      <p>7. Défi du jour : questions et calculs très difficiles, sans mise, une seule tentative par jour. Réussi (≥90% de bonnes réponses) → +150 pts. Échoué (score insuffisant ou temps écoulé) → -75% de votre solde de points.</p>
     </div>
   `;
 }
@@ -1046,7 +1046,7 @@ function renderDailyChallengeChoice() {
       <div class="card glow-card" style="border-left-color: var(--red);">
         <h2>⚠️ Défi du jour — tout ou rien</h2>
         <p>Questions et calculs <strong>nettement plus difficiles</strong> que le jeu normal, sans mise possible. Une seule tentative par jour, quel que soit le résultat :</p>
-        <p style="font-size:15px; font-weight:700; color:var(--green); margin:8px 0 4px;">✅ Réussi (≥ ${dc?.thresholdPercent ?? 80}% de bonnes réponses) → +${dc?.rewardPoints ?? 150} pts</p>
+        <p style="font-size:15px; font-weight:700; color:var(--green); margin:8px 0 4px;">✅ Réussi (≥ ${dc?.thresholdPercent ?? 90}% de bonnes réponses) → +${dc?.rewardPoints ?? 150} pts</p>
         <p style="font-size:15px; font-weight:700; color:var(--red); margin:0 0 12px;">❌ Échoué (score insuffisant ou temps écoulé) → -${dc?.lossPercent ?? 75}% de votre solde de points</p>
         <p style="font-size:13px; color:var(--muted);">Une fois lancée, la tentative ne peut plus être annulée — impossible de réessayer aujourd'hui, même en cas d'échec.</p>
         <button class="primary" id="daily-challenge-confirm-btn" style="margin-top:10px;">J'ai compris, continuer →</button>

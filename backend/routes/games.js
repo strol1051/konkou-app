@@ -91,7 +91,7 @@ function stakeMultiplier(correctCount, total) {
 // UNIQUE(user_id, claim_date) sur daily_challenge_claims) : impossible de retenter après
 // un échec pour "rejouer sa perte" le même jour — sinon un joueur pourrait reperdre 75% de
 // son solde en boucle jusqu'à réussir, ce qui viderait un compte en 2-3 tentatives.
-const DAILY_CHALLENGE_PERCENT = 80;
+const DAILY_CHALLENGE_PERCENT = 90;
 const DAILY_CHALLENGE_REWARD_POINTS = 150;
 const DAILY_CHALLENGE_LOSS_PERCENT = 75;
 const DAILY_CHALLENGE_QUESTIONS_PER_ROUND = 5; // même nombre que le quiz normal
