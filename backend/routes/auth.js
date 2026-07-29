@@ -1,6 +1,6 @@
 import crypto from 'node:crypto';
 import db from '../db.js';
-import { hashPassword, verifyPassword, signToken, PASSWORD_RE, PASSWORD_REQUIREMENTS_MESSAGE } from '../utils.js';
+import { hashPassword, verifyPassword, signToken, PASSWORD_RE, PASSWORD_REQUIREMENTS_MESSAGE, calcAge } from '../utils.js';
 import { issueOtp, checkOtpStatus } from '../otp.js';
 
 function makeReferralCode(name) {
@@ -22,9 +22,9 @@ function publicUser(user) {
 const PHONE_RE = /^509\d{8}$/;
 
 export async function register(body) {
-  const { phone, name, password, referralCode } = body || {};
-  if (!phone || !name || !password) {
-    return { status: 400, data: { error: 'Téléphone, nom et mot de passe requis' } };
+  const { phone, name, password, referralCode, birthDate } = body || {};
+  if (!phone || !name || !password || !birthDate) {
+    return { status: 400, data: { error: 'Téléphone, nom, date de naissance et mot de passe requis' } };
   }
   if (!PHONE_RE.test(phone)) {
     return { status: 400, data: { error: 'Numéro de téléphone invalide (8 chiffres attendus après le +509)' } };
@@ -32,6 +32,15 @@ export async function register(body) {
   if (!PASSWORD_RE.test(password)) {
     return { status: 400, data: { error: PASSWORD_REQUIREMENTS_MESSAGE } };
   }
+  // Âge minimum de 18 ans (juillet 2026), même exigence et même calcul que l'inscription
+  // agent (voir calcAge() dans utils.js) — évalué par rapport à la date d'inscription (donc
+  // "maintenant"), pas figé une fois pour toutes : un joueur ne peut pas s'inscrire la
+  // veille de ses 18 ans en espérant que ça reste valide, il doit avoir 18 ans révolus le
+  // jour même de la demande.
+  const age = calcAge(birthDate);
+  if (age === null) return { status: 400, data: { error: 'Date de naissance invalide' } };
+  if (age < 18) return { status: 400, data: { error: 'Vous devez avoir au moins 18 ans pour vous inscrire' } };
+
   const existing = db.prepare('SELECT id, phone_verified FROM users WHERE phone = ?').get(phone);
   if (existing && existing.phone_verified) {
     return { status: 409, data: { error: 'Ce numéro est déjà enregistré' } };
@@ -58,8 +67,8 @@ export async function register(body) {
     // never sent, user gave up, etc.) — instead of permanently squatting the number, let
     // this new attempt take it over: update the name/password and re-send a fresh code.
     userId = existing.id;
-    db.prepare('UPDATE users SET name = ?, password_hash = ?, referred_by = ? WHERE id = ?')
-      .run(name, hash, referredBy, userId);
+    db.prepare('UPDATE users SET name = ?, password_hash = ?, referred_by = ?, birth_date = ? WHERE id = ?')
+      .run(name, hash, referredBy, birthDate, userId);
   } else {
     let myCode = makeReferralCode(name);
     while (db.prepare('SELECT id FROM users WHERE referral_code = ?').get(myCode)) {
@@ -68,8 +77,8 @@ export async function register(body) {
     let info;
     try {
       info = db.prepare(
-        'INSERT INTO users (phone, name, password_hash, points, referral_code, referred_by, phone_verified) VALUES (?, ?, ?, ?, ?, ?, 0)'
-      ).run(phone, name, hash, signupBonus, myCode, referredBy);
+        'INSERT INTO users (phone, name, password_hash, points, referral_code, referred_by, phone_verified, birth_date) VALUES (?, ?, ?, ?, ?, ?, 0, ?)'
+      ).run(phone, name, hash, signupBonus, myCode, referredBy, birthDate);
     } catch (e) {
       // Handles the rare race where two requests with the same phone number pass the
       // existence check above at nearly the same time; the UNIQUE constraint catches it here instead.

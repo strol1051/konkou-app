@@ -46,6 +46,36 @@ export function verifyPassword(password, stored) {
 export const PASSWORD_RE = /^(?=.*[A-Z])(?=.*\d).{8,}$/;
 export const PASSWORD_REQUIREMENTS_MESSAGE = 'Le mot de passe doit contenir au moins 8 caractères, dont une majuscule et un chiffre';
 
+// --- âge minimum à l'inscription (juillet 2026) ---
+// Calcule un âge en années pleines à partir d'une date de naissance (chaîne "AAAA-MM-JJ",
+// le format natif d'un <input type="date">). Retourne null si la date est absente/invalide
+// plutôt que de lever une exception — laisse l'appelant décider du message d'erreur exact
+// (le contexte diffère entre l'inscription joueur et l'inscription agent). Déplacée ici
+// depuis routes/agents.js (qui l'avait en local, seul endroit à en avoir besoin jusqu'ici)
+// pour être partagée avec routes/auth.js, qui applique désormais la même exigence de 18 ans
+// à l'inscription joueur — un seul endroit pour ce calcul, comme pour PASSWORD_RE ci-dessus.
+export function calcAge(birthDate) {
+  // Piège JS classique : une chaîne "AAAA-MM-JJ" sans heure (exactement ce que produit un
+  // <input type="date">) est interprétée par new Date() comme minuit UTC, alors que la
+  // comparaison ci-dessous lit l'année/mois/jour en heure LOCALE du serveur (getFullYear,
+  // getMonth, getDate). Sur un serveur à l'ouest de l'UTC (le cas de Render pour cette app,
+  // souvent configuré en heure d'Haïti — voir DEPLOY.md), minuit UTC correspond encore à la
+  // veille en heure locale : la date de naissance "recule" silencieusement d'un jour, ce qui
+  // peut faire gagner un jour d'âge à tort (un joueur qui a 17 ans et 364 jours pourrait
+  // passer la vérification comme s'il avait 18 ans pile). Corrigé en parsant nous-mêmes
+  // année/mois/jour et en construisant la date avec le constructeur local (new Date(y, m-1,
+  // d)), qui n'a pas cette bascule. Le format alternatif (new Date(birthDate) direct) reste
+  // en secours pour toute autre forme de date, au cas où.
+  const parts = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(birthDate || '').trim());
+  const b = parts ? new Date(Number(parts[1]), Number(parts[2]) - 1, Number(parts[3])) : new Date(birthDate);
+  if (isNaN(b.getTime())) return null;
+  const now = new Date();
+  let age = now.getFullYear() - b.getFullYear();
+  const m = now.getMonth() - b.getMonth();
+  if (m < 0 || (m === 0 && now.getDate() < b.getDate())) age--;
+  return age;
+}
+
 // --- signed tokens (JWT-like, HMAC-SHA256, no jsonwebtoken dependency needed) ---
 function base64url(input) {
   return Buffer.from(input).toString('base64url');

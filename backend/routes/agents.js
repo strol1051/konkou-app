@@ -1,6 +1,6 @@
 import crypto from 'node:crypto';
 import db from '../db.js';
-import { hashPassword, PASSWORD_RE, PASSWORD_REQUIREMENTS_MESSAGE } from '../utils.js';
+import { hashPassword, PASSWORD_RE, PASSWORD_REQUIREMENTS_MESSAGE, calcAge } from '../utils.js';
 import { issueOtp } from '../otp.js';
 
 export function getAgentCapitalHtg() { return parseFloat(process.env.AGENT_CAPITAL_HTG || '7500'); }
@@ -39,15 +39,9 @@ function uniqueAgentCode(lastName, firstName, forUserId) {
   }
 }
 
-function calcAge(birthDate) {
-  const b = new Date(birthDate);
-  if (isNaN(b.getTime())) return null;
-  const now = new Date();
-  let age = now.getFullYear() - b.getFullYear();
-  const m = now.getMonth() - b.getMonth();
-  if (m < 0 || (m === 0 && now.getDate() < b.getDate())) age--;
-  return age;
-}
+// calcAge() déplacée dans utils.js (juillet 2026) — désormais partagée avec l'inscription
+// joueur (routes/auth.js), qui applique la même exigence de 18 ans. Voir le commentaire
+// là-bas.
 
 // Sequential agent number — "000001" for the first agent ever to apply, "000002" for the
 // next, and so on. Reuses the agents.id primary key (assigned once, at first-ever

@@ -31,6 +31,12 @@ CREATE TABLE IF NOT EXISTS users (
   referred_by TEXT,
   phone_verified INTEGER NOT NULL DEFAULT 0,
   bonus_plays INTEGER NOT NULL DEFAULT 0,
+  -- Date de naissance (juillet 2026, exigée à l'inscription joueur comme elle l'était déjà
+  -- pour l'inscription agent) — sert uniquement à vérifier les 18 ans au moment de
+  -- l'inscription (voir calcAge() dans utils.js et register() dans routes/auth.js) ; jamais
+  -- revalidée après coup, donc un compte créé avant cette exigence garde birth_date à NULL
+  -- sans que ça bloque quoi que ce soit (login, jeu...).
+  birth_date TEXT,
   created_at TEXT DEFAULT (datetime('now'))
 );
 
@@ -300,7 +306,11 @@ for (const stmt of [
   // si outcome='won', -(75% du solde au moment de l'échec) si outcome='lost'. Champ
   // d'affichage/historique uniquement (le solde réel est déjà à jour via users.points et
   // la transaction associée) — les lignes historiques valent 0 ici, sans conséquence.
-  "ALTER TABLE daily_challenge_claims ADD COLUMN points_delta INTEGER NOT NULL DEFAULT 0"
+  "ALTER TABLE daily_challenge_claims ADD COLUMN points_delta INTEGER NOT NULL DEFAULT 0",
+  // Voir le commentaire sur la colonne birth_date dans la table users ci-dessus — même
+  // logique que pour bonus_plays/vip_until : les bases créées avant cette migration
+  // rattrapent la colonne, NULL pour tous les comptes existants.
+  "ALTER TABLE users ADD COLUMN birth_date TEXT"
 ]) {
   try { db.exec(stmt); } catch { /* column already exists */ }
 }

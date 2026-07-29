@@ -623,6 +623,10 @@ function renderLoginRegister() {
         ${!isLogin ? `<input name="name" placeholder="Nom complet" required />` : ''}
         ${phoneField('phone')}
         ${pwdField('password', 'Mot de passe (min. 8 car., 1 majuscule, 1 chiffre)')}
+        ${!isLogin ? `
+          <label style="display:block; font-size:12px; color:var(--muted); margin:6px 0 -6px;">Date de naissance (18 ans ou plus requis)</label>
+          <input name="birthDate" type="date" required />
+        ` : ''}
         ${!isLogin ? `<input name="referralCode" placeholder="Code de parrainage (optionnel)" />` : ''}
         <button class="primary" type="submit">${isLogin ? 'Se connecter' : "S'inscrire"}</button>
       </form>
