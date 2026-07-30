@@ -1,6 +1,7 @@
 import crypto from 'node:crypto';
 import db from '../db.js';
-import { resolveActiveAgentId } from './agents.js';
+import { resolveActiveAgentId, getAgentUserId } from './agents.js';
+import { notifyUser } from './push.js';
 
 // Même alphabet que les codes de dépôt/retrait — lu à voix haute ou recopié à la main
 // chez l'agent, donc pas de caractères ambigus (0/O, 1/I/L).
@@ -75,6 +76,13 @@ export function requestVip(userId, body) {
   const info = db.prepare(
     `INSERT INTO vip_purchases (user_id, agent_id, amount_htg, duration_days, code, status) VALUES (?, ?, ?, ?, ?, 'pending')`
   ).run(userId, agentId, amount, durationDays, code);
+
+  // Notifie l'agent assigné (best-effort) — voir le même commentaire dans wallet.js.
+  notifyUser(getAgentUserId(agentId), {
+    title: 'Konkou — Nouvelle demande VIP',
+    body: `Un joueur demande un abonnement VIP de ${amount} HTG (code ${code}).`,
+    url: '/'
+  }).catch(() => {});
 
   return {
     status: 200,

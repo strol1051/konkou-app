@@ -1,6 +1,7 @@
 import crypto from 'node:crypto';
 import db from '../db.js';
-import { resolveActiveAgentId } from './agents.js';
+import { resolveActiveAgentId, getAgentUserId } from './agents.js';
+import { notifyUser } from './push.js';
 
 // Excludes visually-ambiguous characters (0/O, 1/I/L), same alphabet as cash-pickup
 // codes since this one is also read aloud/copied by hand at the agent.
@@ -79,6 +80,13 @@ export function postDeposit(userId, body) {
   const info = db.prepare(
     "INSERT INTO deposits (user_id, agent_id, htg_amount, plays_granted, points_granted, kind, code, status, platform_fee_htg) VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', ?)"
   ).run(userId, agentId, amount, playsGranted, pointsGranted, kind, code, platformFeeHtg);
+
+  // Notifie l'agent assigné (best-effort) — voir le même commentaire dans wallet.js.
+  notifyUser(getAgentUserId(agentId), {
+    title: 'Konkou — Nouvelle demande de dépôt',
+    body: `Un joueur demande un dépôt de ${amount} HTG (code ${code}).`,
+    url: '/'
+  }).catch(() => {});
 
   return {
     status: 200,

@@ -2,6 +2,19 @@ import crypto from 'node:crypto';
 import db from '../db.js';
 import { hashPassword, PASSWORD_RE, PASSWORD_REQUIREMENTS_MESSAGE, calcAge } from '../utils.js';
 import { issueOtp } from '../otp.js';
+import { notifyUser, notifyAdmins } from './push.js';
+
+// Notifications push (juillet 2026) — best-effort, jamais bloquant : toute erreur d'envoi
+// est avalée ici, jamais propagée à l'appelant (voir notifyUser/notifyAdmins dans
+// routes/push.js pour le détail du "fire-and-forget"). Ces deux wrappers évitent de
+// répéter le ".catch(() => {})" à chaque site d'appel de ce fichier.
+function notifyUserSilently(userId, payloadObj) {
+  if (!userId) return;
+  notifyUser(userId, payloadObj).catch(() => {});
+}
+function notifyAdminsSilently(payloadObj) {
+  notifyAdmins(payloadObj).catch(() => {});
+}
 
 export function getAgentCapitalHtg() { return parseFloat(process.env.AGENT_CAPITAL_HTG || '7500'); }
 export function getAgentCapitalFeePercent() { return parseFloat(process.env.AGENT_CAPITAL_FEE_PERCENT || '10'); }
@@ -521,6 +534,12 @@ export function postAgentRefill(userId, body) {
      VALUES (?, ?, ?, ?, ?, 'pending')`
   ).run(agent.id, amount, feePercent, platformFee, credited);
 
+  notifyAdminsSilently({
+    title: 'Konkou — Nouvelle demande de renflouement',
+    body: `Agent ${agent.agent_code} demande ${amount} HTG de renflouement.`,
+    url: '/admin.html'
+  });
+
   return {
     status: 200,
     data: {
@@ -558,12 +577,22 @@ export function agentConfirmDeposit(userId, body) {
       .run(dep.points_granted, dep.points_granted, dep.user_id);
     db.prepare('INSERT INTO transactions (user_id, type, amount, note) VALUES (?, ?, ?, ?)')
       .run(dep.user_id, 'deposit_points_confirmed', dep.points_granted, `Dépôt confirmé par l'agent ${agent.agent_code} — ${dep.points_granted} points (non retirables) crédités (code ${dep.code})`);
+    notifyUserSilently(dep.user_id, {
+      title: 'Konkou — Dépôt confirmé',
+      body: `${dep.points_granted} points crédités (code ${dep.code}).`,
+      url: '/'
+    });
     return { status: 200, data: { message: 'Dépôt confirmé, points crédités.' } };
   }
 
   db.prepare('UPDATE users SET bonus_plays = bonus_plays + ? WHERE id = ?').run(dep.plays_granted, dep.user_id);
   db.prepare('INSERT INTO transactions (user_id, type, amount, note) VALUES (?, ?, ?, ?)')
     .run(dep.user_id, 'deposit_confirmed', 0, `Dépôt confirmé par l'agent ${agent.agent_code} — ${dep.plays_granted} partie(s) bonus créditée(s) (code ${dep.code})`);
+  notifyUserSilently(dep.user_id, {
+    title: 'Konkou — Dépôt confirmé',
+    body: `${dep.plays_granted} partie(s) bonus créditée(s) (code ${dep.code}).`,
+    url: '/'
+  });
 
   return { status: 200, data: { message: 'Dépôt confirmé, parties bonus créditées.' } };
 }
@@ -579,6 +608,11 @@ export function agentRejectDeposit(userId, body) {
   if (dep.status !== 'pending') return { status: 409, data: { error: `Ce dépôt est déjà "${dep.status}"` } };
 
   db.prepare("UPDATE deposits SET status = 'rejected', processed_at = datetime('now') WHERE id = ?").run(id);
+  notifyUserSilently(dep.user_id, {
+    title: 'Konkou — Dépôt rejeté',
+    body: `Votre dépôt (code ${dep.code}) a été rejeté par l'agent.`,
+    url: '/'
+  });
   return { status: 200, data: { message: 'Dépôt rejeté.' } };
 }
 
@@ -616,6 +650,11 @@ export function agentConfirmVip(userId, body) {
   }
   db.prepare('INSERT INTO transactions (user_id, type, amount, note) VALUES (?, ?, ?, ?)')
     .run(purchase.user_id, 'vip_confirmed', 0, `Abonnement VIP confirmé par l'agent ${agent.agent_code} — valide jusqu'au ${newUntilIso.slice(0, 10)} (code ${purchase.code})`);
+  notifyUserSilently(purchase.user_id, {
+    title: 'Konkou — Abonnement VIP confirmé',
+    body: `Votre VIP est actif jusqu'au ${newUntilIso.slice(0, 10)}.`,
+    url: '/'
+  });
 
   return { status: 200, data: { message: 'Achat VIP confirmé.', vipUntil: newUntilIso } };
 }
@@ -631,6 +670,11 @@ export function agentRejectVip(userId, body) {
   if (purchase.status !== 'pending') return { status: 409, data: { error: `Cet achat VIP est déjà "${purchase.status}"` } };
 
   db.prepare("UPDATE vip_purchases SET status = 'rejected', processed_at = datetime('now') WHERE id = ?").run(id);
+  notifyUserSilently(purchase.user_id, {
+    title: 'Konkou — Achat VIP rejeté',
+    body: `Votre demande VIP (code ${purchase.code}) a été rejetée par l'agent.`,
+    url: '/'
+  });
   return { status: 200, data: { message: 'Achat VIP rejeté.' } };
 }
 
@@ -652,6 +696,11 @@ export function agentPayCashout(userId, body) {
   db.prepare('UPDATE agents SET commission_earned = commission_earned + ? WHERE id = ?').run(commission, agent.id);
   db.prepare('INSERT INTO transactions (user_id, type, amount, note) VALUES (?, ?, ?, ?)')
     .run(co.user_id, 'cashout_paid', 0, `Retrait payé par l'agent ${agent.agent_code} — code ${co.payout_info}`);
+  notifyUserSilently(co.user_id, {
+    title: 'Konkou — Retrait payé',
+    body: `Votre retrait (code ${co.payout_info}) a été payé.`,
+    url: '/'
+  });
 
   return { status: 200, data: { message: `Retrait marqué comme payé. Commission gagnée : ${commission} HTG.` } };
 }
@@ -671,6 +720,11 @@ export function agentRejectCashout(userId, body) {
   db.prepare('UPDATE users SET points = points + ? WHERE id = ?').run(co.points, co.user_id);
   db.prepare('INSERT INTO transactions (user_id, type, amount, note) VALUES (?, ?, ?, ?)')
     .run(co.user_id, 'cashout_rejected', co.points, `Retrait rejeté par l'agent (code ${co.payout_info}) — points remboursés`);
+  notifyUserSilently(co.user_id, {
+    title: 'Konkou — Retrait rejeté',
+    body: `Votre retrait (code ${co.payout_info}) a été rejeté, points remboursés.`,
+    url: '/'
+  });
 
   return { status: 200, data: { message: 'Retrait rejeté, points remboursés au joueur.' } };
 }
@@ -681,4 +735,15 @@ export function resolveActiveAgentId(agentCode) {
   if (!agentCode) return null;
   const agent = db.prepare("SELECT id FROM agents WHERE agent_code = ? AND status = 'active'").get(String(agentCode).toUpperCase());
   return agent ? agent.id : null;
+}
+
+// Un agent est avant tout une ligne "users" (voir agents.user_id) — donc pour lui envoyer
+// une notification push, on utilise le même notifyUser(userId, ...) que pour un joueur
+// classique, avec SON PROPRE user_id. Utilisé par wallet.js/deposits.js/vip.js pour
+// prévenir l'agent assigné dès qu'une nouvelle demande (retrait/dépôt/VIP) lui arrive.
+// Retourne null si l'agent n'existe pas (ne devrait pas arriver en pratique, puisque
+// agentId vient toujours de resolveActiveAgentId juste avant).
+export function getAgentUserId(agentId) {
+  const agent = db.prepare('SELECT user_id FROM agents WHERE id = ?').get(agentId);
+  return agent ? agent.user_id : null;
 }

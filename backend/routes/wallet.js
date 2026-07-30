@@ -1,7 +1,8 @@
 import crypto from 'node:crypto';
 import db from '../db.js';
 import { getMinDeposit, getMaxDeposit, getHtgPerPlay, getPointsPerHtgPurchase, getDepositFeePercent, getDepositInfo } from './deposits.js';
-import { resolveActiveAgentId } from './agents.js';
+import { resolveActiveAgentId, getAgentUserId } from './agents.js';
+import { notifyUser } from './push.js';
 
 function getRate() { return parseFloat(process.env.POINTS_TO_HTG_RATE || '0.08'); }
 function getMinCashoutHtg() { return parseFloat(process.env.MIN_CASHOUT_HTG || '500'); }
@@ -147,6 +148,15 @@ export function postCashout(userId, body) {
     `INSERT INTO cashouts (user_id, agent_id, points, htg_amount, platform_fee_htg, net_payout_htg, method, payout_info, status)
      VALUES (?, ?, ?, ?, ?, ?, 'cash_pickup', ?, 'pending')`
   ).run(userId, agentId, pts, htgAmount, platformFeeHtg, netPayoutHtg, code);
+
+  // Notifie l'agent assigné (best-effort, voir routes/push.js) — un agent est une ligne
+  // "users" comme un joueur (voir agents.user_id dans db.js), donc notifyUser fonctionne
+  // ici exactement pareil qu'ailleurs, avec son propre user_id.
+  notifyUser(getAgentUserId(agentId), {
+    title: 'Konkou — Nouvelle demande de retrait',
+    body: `Un joueur demande un retrait de ${netPayoutHtg} HTG (code ${code}).`,
+    url: '/'
+  }).catch(() => {});
 
   return {
     status: 200,

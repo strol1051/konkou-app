@@ -54,6 +54,11 @@ export function payCashout(body) {
   db.prepare("UPDATE cashouts SET status = 'paid', processed_at = datetime('now') WHERE id = ?").run(id);
   db.prepare('INSERT INTO transactions (user_id, type, amount, note) VALUES (?, ?, ?, ?)')
     .run(cashout.user_id, 'cashout_paid', 0, `Retrait payé — code ${cashout.payout_info}`);
+  notifyUser(cashout.user_id, {
+    title: 'Konkou — Retrait payé',
+    body: `Votre retrait (code ${cashout.payout_info}) a été payé.`,
+    url: '/'
+  }).catch(() => {});
 
   return { status: 200, data: { message: 'Retrait marqué comme payé.' } };
 }
@@ -73,6 +78,11 @@ export function rejectCashout(body) {
   db.prepare('UPDATE users SET points = points + ? WHERE id = ?').run(cashout.points, cashout.user_id);
   db.prepare('INSERT INTO transactions (user_id, type, amount, note) VALUES (?, ?, ?, ?)')
     .run(cashout.user_id, 'cashout_rejected', cashout.points, `Retrait rejeté (code ${cashout.payout_info}) — points remboursés`);
+  notifyUser(cashout.user_id, {
+    title: 'Konkou — Retrait rejeté',
+    body: `Votre retrait (code ${cashout.payout_info}) a été rejeté, points remboursés.`,
+    url: '/'
+  }).catch(() => {});
 
   return { status: 200, data: { message: 'Retrait rejeté, points remboursés au joueur.' } };
 }
@@ -206,12 +216,22 @@ export function confirmDeposit(body) {
       .run(deposit.points_granted, deposit.points_granted, deposit.user_id);
     db.prepare('INSERT INTO transactions (user_id, type, amount, note) VALUES (?, ?, ?, ?)')
       .run(deposit.user_id, 'deposit_points_confirmed', deposit.points_granted, `Dépôt confirmé — ${deposit.points_granted} points (non retirables) crédités (code ${deposit.code})`);
+    notifyUser(deposit.user_id, {
+      title: 'Konkou — Dépôt confirmé',
+      body: `${deposit.points_granted} points crédités (code ${deposit.code}).`,
+      url: '/'
+    }).catch(() => {});
     return { status: 200, data: { message: 'Dépôt confirmé, points crédités.' } };
   }
 
   db.prepare('UPDATE users SET bonus_plays = bonus_plays + ? WHERE id = ?').run(deposit.plays_granted, deposit.user_id);
   db.prepare('INSERT INTO transactions (user_id, type, amount, note) VALUES (?, ?, ?, ?)')
     .run(deposit.user_id, 'deposit_confirmed', 0, `Dépôt confirmé — ${deposit.plays_granted} partie(s) bonus créditée(s) (code ${deposit.code})`);
+  notifyUser(deposit.user_id, {
+    title: 'Konkou — Dépôt confirmé',
+    body: `${deposit.plays_granted} partie(s) bonus créditée(s) (code ${deposit.code}).`,
+    url: '/'
+  }).catch(() => {});
 
   return { status: 200, data: { message: 'Dépôt confirmé, parties bonus créditées.' } };
 }
@@ -229,6 +249,11 @@ export function rejectDeposit(body) {
   // No refund needed here (unlike cashouts) — nothing was debited from the user's
   // balance up front, this just means the agent never actually received the cash.
   db.prepare("UPDATE deposits SET status = 'rejected', processed_at = datetime('now') WHERE id = ?").run(id);
+  notifyUser(deposit.user_id, {
+    title: 'Konkou — Dépôt rejeté',
+    body: `Votre dépôt (code ${deposit.code}) a été rejeté.`,
+    url: '/'
+  }).catch(() => {});
   return { status: 200, data: { message: 'Dépôt rejeté.' } };
 }
 
@@ -328,6 +353,11 @@ export function confirmAgentRefill(body) {
   const agent = db.prepare('SELECT user_id, agent_code FROM agents WHERE id = ?').get(refill.agent_id);
   db.prepare('INSERT INTO transactions (user_id, type, amount, note) VALUES (?, ?, ?, ?)')
     .run(agent.user_id, 'agent_refill_confirmed', 0, `Renflouement confirmé (code ${agent.agent_code}) — ${refill.credited_htg} HTG de crédit ajouté`);
+  notifyUser(agent.user_id, {
+    title: 'Konkou — Renflouement confirmé',
+    body: `${refill.credited_htg} HTG de crédit ajouté à votre compte agent.`,
+    url: '/'
+  }).catch(() => {});
 
   return { status: 200, data: { message: `Renflouement confirmé, ${refill.credited_htg} HTG de crédit ajouté.` } };
 }
@@ -343,6 +373,12 @@ export function rejectAgentRefill(body) {
   }
 
   db.prepare("UPDATE agent_refills SET status = 'rejected', processed_at = datetime('now') WHERE id = ?").run(id);
+  const agent = db.prepare('SELECT user_id FROM agents WHERE id = ?').get(refill.agent_id);
+  notifyUser(agent.user_id, {
+    title: 'Konkou — Renflouement rejeté',
+    body: `Votre demande de renflouement de ${refill.amount_htg} HTG a été rejetée.`,
+    url: '/'
+  }).catch(() => {});
   return { status: 200, data: { message: 'Renflouement rejeté.' } };
 }
 
@@ -391,6 +427,11 @@ export function confirmVipPurchase(body) {
   }
   db.prepare('INSERT INTO transactions (user_id, type, amount, note) VALUES (?, ?, ?, ?)')
     .run(purchase.user_id, 'vip_confirmed', 0, `Abonnement VIP confirmé — valide jusqu'au ${newUntilIso.slice(0, 10)} (code ${purchase.code})`);
+  notifyUser(purchase.user_id, {
+    title: 'Konkou — Abonnement VIP confirmé',
+    body: `Votre VIP est actif jusqu'au ${newUntilIso.slice(0, 10)}.`,
+    url: '/'
+  }).catch(() => {});
 
   return { status: 200, data: { message: 'Achat VIP confirmé.', vipUntil: newUntilIso } };
 }
@@ -406,6 +447,11 @@ export function rejectVipPurchase(body) {
   }
 
   db.prepare("UPDATE vip_purchases SET status = 'rejected', processed_at = datetime('now') WHERE id = ?").run(id);
+  notifyUser(purchase.user_id, {
+    title: 'Konkou — Achat VIP rejeté',
+    body: `Votre demande VIP (code ${purchase.code}) a été rejetée.`,
+    url: '/'
+  }).catch(() => {});
   return { status: 200, data: { message: 'Achat VIP rejeté.' } };
 }
 
