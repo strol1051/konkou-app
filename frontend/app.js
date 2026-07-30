@@ -1112,13 +1112,13 @@ function renderHome() {
       <button class="game-panel" data-start="trivia">
         <div class="icon-badge">🧠</div>
         <h3>Quiz culture générale</h3>
-        <p>5 questions · 25 secondes</p>
+        <p>5 questions · 35 secondes</p>
         <div class="panel-cta">Jouer <span aria-hidden="true">→</span></div>
       </button>
       <button class="game-panel" data-start="puzzle">
         <div class="icon-badge">🔢</div>
         <h3>Sprint de calcul</h3>
-        <p>8 calculs · 25 secondes</p>
+        <p>8 calculs · 35 secondes</p>
         <div class="panel-cta">Jouer <span aria-hidden="true">→</span></div>
       </button>
     </div>
@@ -1129,7 +1129,7 @@ function renderHome() {
       <p>3. Cumulez et demandez un retrait en espèces chez l'un de nos Agents sur tout le territoire national.</p>
       <p>4. Plus de parties gratuites aujourd'hui ? Déposez chez l'agent pour des parties bonus (onglet Portefeuille) — cet argent achète des parties, il n'est pas retirable.</p>
       <p>5. Avant chaque partie, vous pouvez miser entre 100 et 2500 de vos points : score quasi parfait, la mise augmente jusqu'à 10% ; score faible, elle peut diminuer jusqu'à 75%. Optionnel — vous pouvez toujours jouer sans miser.</p>
-      <p>6. Chaque partie est chronométrée (25 secondes) : le temps s'affiche pendant que vous jouez. Si le temps s'écoule avant la fin, la partie est perdue (0 point) et une mise éventuelle perd 50% — répondez avant la fin du compte à rebours !</p>
+      <p>6. Chaque partie est chronométrée (35 secondes, 60 secondes pour le Défi du jour) : le temps s'affiche pendant que vous jouez. Si le temps s'écoule avant la fin, la partie est perdue (0 point) et une mise éventuelle perd 50% — répondez avant la fin du compte à rebours !</p>
       <p>7. Défi du jour : questions et calculs très difficiles, sans mise, une seule tentative par jour. Réussi (≥90% de bonnes réponses) → +150 pts. Échoué (score insuffisant ou temps écoulé) → -75% de votre solde de points.</p>
     </div>
   `;
@@ -1185,13 +1185,13 @@ function renderDailyChallengeChoice() {
       <button class="game-panel" data-daily-start="trivia">
         <div class="icon-badge">🧠</div>
         <h3>Quiz difficile</h3>
-        <p>5 questions très difficiles · 25 secondes</p>
+        <p>5 questions très difficiles · 60 secondes</p>
         <div class="panel-cta">Jouer <span aria-hidden="true">→</span></div>
       </button>
       <button class="game-panel" data-daily-start="puzzle">
         <div class="icon-badge">🔢</div>
         <h3>Sprint difficile</h3>
-        <p>8 calculs difficiles · 25 secondes</p>
+        <p>8 calculs difficiles · 60 secondes</p>
         <div class="panel-cta">Jouer <span aria-hidden="true">→</span></div>
       </button>
     </div>
@@ -1225,7 +1225,7 @@ function renderStakePrompt() {
     ${state.error ? `<div class="error-banner">${escapeHtml(state.error)}</div>` : ''}
     <div class="card">
       <h2>${pendingGameType === 'trivia' ? '🧠' : '🔢'} ${label}</h2>
-      <p>Vous pouvez miser entre ${STAKE_MIN} et ${STAKE_MAX} points de votre solde (${balance} pts disponibles) avant de jouer. Votre mise varie selon votre score : un score parfait la fait gagner 10%, un score nul lui en fait perdre 75% — il faut environ 9 bonnes réponses sur 10 pour au moins récupérer sa mise. Les points gagnés normalement par bonne réponse restent les mêmes, avec ou sans mise. ⚠️ Si le temps s'écoule (25 secondes par partie), la partie est perdue et votre mise perd 50% quel que soit votre score en cours — cette règle remplace la formule ci-dessus dans ce cas.</p>
+      <p>Vous pouvez miser entre ${STAKE_MIN} et ${STAKE_MAX} points de votre solde (${balance} pts disponibles) avant de jouer. Votre mise varie selon votre score : un score parfait la fait gagner 10%, un score nul lui en fait perdre 75% — il faut environ 9 bonnes réponses sur 10 pour au moins récupérer sa mise. Les points gagnés normalement par bonne réponse restent les mêmes, avec ou sans mise. ⚠️ Si le temps s'écoule (35 secondes par partie), la partie est perdue et votre mise perd 50% quel que soit votre score en cours — cette règle remplace la formule ci-dessus dans ce cas.</p>
       ${maxStake < STAKE_MIN ? `
         <p class="error-banner">Solde insuffisant (min. ${STAKE_MIN} pts) pour miser — vous pouvez quand même jouer sans mise.</p>
         <button class="primary" id="play-no-stake">Jouer sans mise</button>

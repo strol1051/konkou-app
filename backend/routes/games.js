@@ -41,12 +41,18 @@ const SESSION_TTL_MS = 30 * 60 * 1000; // 30 min: a game started but never submi
 // Limite de temps visible par partie (juillet 2026) : un compte à rebours s'affiche
 // côté joueur (voir frontend/app.js) et soumet automatiquement les réponses déjà données
 // à l'expiration (les questions restantes comptent comme fausses, voir STAKE_TIMEOUT_LOSS
-// _PERCENT ci-dessous pour la pénalité de mise associée). Même durée pour les deux jeux,
-// à la demande explicite — initialement 60s pour le quiz, ramenée à 45s pour rester
-// cohérente avec le sprint de calcul, resserrée une seconde fois à 30s, puis une
-// troisième fois à 25s.
-const TRIVIA_TIME_LIMIT_SECONDS = 25;
-const PUZZLE_TIME_LIMIT_SECONDS = 25;
+// _PERCENT ci-dessous pour la pénalité de mise associée). Même durée pour les deux jeux
+// normaux — initialement 60s pour le quiz, ramenée à 45s pour rester cohérente avec le
+// sprint de calcul, resserrée à 30s, puis 25s, puis remontée à 35s (juillet 2026).
+const TRIVIA_TIME_LIMIT_SECONDS = 35;
+const PUZZLE_TIME_LIMIT_SECONDS = 35;
+// Le Défi du jour (voir getDailyChallengeTrivia/Puzzle plus bas) a toujours utilisé la
+// même durée que les jeux normaux jusqu'ici — mais ses questions/calculs sont volontairement
+// beaucoup plus difficiles (banque dédiée, voir dailyChallengeQuestions/HARD_PUZZLE_SPACE),
+// donc une constante SÉPARÉE lui est désormais dédiée plutôt que de réutiliser
+// TRIVIA_TIME_LIMIT_SECONDS/PUZZLE_TIME_LIMIT_SECONDS — les deux peuvent évoluer
+// indépendamment à l'avenir sans affecter l'autre.
+const DAILY_CHALLENGE_TIME_LIMIT_SECONDS = 60;
 // Marge de tolérance côté serveur entre la fin du compte à rebours et la réception de la
 // soumission automatique (latence réseau, onglet mis en arrière-plan par le navigateur...).
 // Au-delà de limite + marge depuis le début de la partie, la soumission est refusée — ça
@@ -161,14 +167,14 @@ export function getDailyChallengeTrivia(userId) {
   activeSessions.set(sessionToken, {
     userId, gameType: 'trivia', mode: 'daily', correctAnswers: picked.map(q => q.answer),
     createdAt: Date.now(), usingBonus: false, stake: 0,
-    timeLimitSeconds: TRIVIA_TIME_LIMIT_SECONDS
+    timeLimitSeconds: DAILY_CHALLENGE_TIME_LIMIT_SECONDS
   });
   return {
     status: 200,
     data: {
       sessionToken,
       questions: picked.map(q => ({ id: q.id, question: q.question, choices: q.choices })),
-      timeLimitSeconds: TRIVIA_TIME_LIMIT_SECONDS,
+      timeLimitSeconds: DAILY_CHALLENGE_TIME_LIMIT_SECONDS,
       thresholdPercent: DAILY_CHALLENGE_PERCENT,
       rewardPoints: DAILY_CHALLENGE_REWARD_POINTS,
       lossPercent: DAILY_CHALLENGE_LOSS_PERCENT
@@ -187,13 +193,13 @@ export function getDailyChallengePuzzle(userId) {
   activeSessions.set(sessionToken, {
     userId, gameType: 'puzzle', mode: 'daily', correctAnswers,
     createdAt: Date.now(), usingBonus: false, stake: 0,
-    timeLimitSeconds: PUZZLE_TIME_LIMIT_SECONDS
+    timeLimitSeconds: DAILY_CHALLENGE_TIME_LIMIT_SECONDS
   });
   return {
     status: 200,
     data: {
       sessionToken, problems,
-      timeLimitSeconds: PUZZLE_TIME_LIMIT_SECONDS,
+      timeLimitSeconds: DAILY_CHALLENGE_TIME_LIMIT_SECONDS,
       thresholdPercent: DAILY_CHALLENGE_PERCENT,
       rewardPoints: DAILY_CHALLENGE_REWARD_POINTS,
       lossPercent: DAILY_CHALLENGE_LOSS_PERCENT
