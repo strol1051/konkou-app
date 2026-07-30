@@ -12,5 +12,12 @@
 <body>
   <div id="app"></div>
   <script type="module" src="admin.js"></script>
+  <!-- Nécessaire pour les notifications push (voir push-client.js/webpush.js, juillet
+       2026) : PushManager exige un service worker actif (navigator.serviceWorker.ready),
+       qui n'existait jusqu'ici que sur index.html (voir sw-register.js, déjà utilisé côté
+       joueur pour le mode hors-ligne). Le même sw.js, enregistré à la racine "/", couvre
+       tout le domaine — donc /admin.html et /index.html partagent le même service worker
+       plutôt que d'en avoir besoin d'un séparé. -->
+  <script src="sw-register.js"></script>
 </body>
 </html>

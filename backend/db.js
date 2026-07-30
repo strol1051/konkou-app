@@ -47,7 +47,10 @@ CREATE TABLE IF NOT EXISTS otp_codes (
   purpose TEXT NOT NULL, -- verify_phone | reset_password
   used INTEGER NOT NULL DEFAULT 0,
   expires_at TEXT NOT NULL,
-  payload TEXT, -- reset_password stashes the new (hashed) password here until an admin confirms
+  payload TEXT, -- inutilisé depuis la refonte de juillet 2026 de la réinitialisation de
+                 -- mot de passe (voir forgotPassword() dans routes/auth.js — la demande ne
+                 -- transporte plus de mot de passe) ; conservé au cas où un futur usage
+                 -- d'issueOtp() aurait besoin d'un payload générique, comme prévu à l'origine
   created_at TEXT DEFAULT (datetime('now'))
 );
 
@@ -179,6 +182,28 @@ CREATE TABLE IF NOT EXISTS agent_reimbursements (
   withdrawals_count INTEGER NOT NULL DEFAULT 0,
   withdrawals_htg REAL NOT NULL DEFAULT 0,
   method TEXT NOT NULL, -- 'natcash' | 'moncash'
+  created_at TEXT DEFAULT (datetime('now'))
+);
+
+-- Abonnements aux notifications push (voir backend/webpush.js et routes/push.js, juillet
+-- 2026) : un navigateur qui a accepté de recevoir des notifications enregistre ici son
+-- "endpoint" (URL propre au service de push du navigateur — Chrome/Firefox/etc., unique
+-- par appareil+navigateur) et les deux clés nécessaires pour chiffrer un message à son
+-- intention (p256dh, auth — voir RFC 8291). subject_type distingue deux populations qui ne
+-- reçoivent jamais les mêmes notifications : 'admin' (n'importe quel navigateur connecté à
+-- /admin.html, pas de user_id — un seul mot de passe admin partagé, voir login() dans
+-- routes/admin.js) et 'user' (un joueur/agent précis, identifié par user_id, qui ne reçoit
+-- que les notifications qui LE concernent, ex: sa propre demande de réinitialisation
+-- autorisée). endpoint est UNIQUE : un même navigateur qui se réabonne (ex: après avoir
+-- effacé ses données) remplace simplement son ancienne ligne plutôt que d'en accumuler une
+-- par abonnement successif — voir subscribePush() dans routes/push.js (INSERT OR REPLACE).
+CREATE TABLE IF NOT EXISTS push_subscriptions (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  subject_type TEXT NOT NULL, -- 'admin' | 'user'
+  user_id INTEGER, -- NULL pour 'admin' ; référence users.id pour 'user'
+  endpoint TEXT NOT NULL UNIQUE,
+  p256dh TEXT NOT NULL,
+  auth TEXT NOT NULL,
   created_at TEXT DEFAULT (datetime('now'))
 );
 

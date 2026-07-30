@@ -18,6 +18,7 @@ import * as contactRoutes from './routes/contact.js';
 import * as themeRoutes from './routes/theme.js';
 import * as adsRoutes from './routes/ads.js';
 import * as vipRoutes from './routes/vip.js';
+import * as pushRoutes from './routes/push.js';
 
 loadEnv();
 
@@ -475,6 +476,41 @@ const server = http.createServer(async (req, res) => {
     // n'est affichée par app.js qu'une fois le joueur/agent connecté.
     if (pathname === '/api/ad' && method === 'GET') {
       const { status, data } = adsRoutes.getAd();
+      return sendJson(res, status, data);
+    }
+
+    // ---------- Notifications push (voir backend/webpush.js et routes/push.js) ----------
+
+    // Clé publique VAPID — publique par nature (voir routes/push.js), nécessaire côté
+    // frontend AVANT même de pouvoir appeler PushManager.subscribe().
+    if (pathname === '/api/push/vapid-public-key' && method === 'GET') {
+      const { status, data } = pushRoutes.getVapidPublicKeyRoute();
+      return sendJson(res, status, data);
+    }
+
+    // Le type d'abonnement ('admin' vs 'user') est déterminé ICI, à partir du jeton
+    // présenté, jamais depuis le corps de la requête (voir la note sur subscribePush()
+    // dans routes/push.js) — vérifie d'abord un jeton admin, sinon retombe sur
+    // requireAuth() comme n'importe quelle route joueur/agent authentifiée.
+    if (pathname === '/api/push/subscribe' && method === 'POST') {
+      if (isAdmin(req)) {
+        const { status, data } = pushRoutes.subscribePush('admin', null, body);
+        return sendJson(res, status, data);
+      }
+      const userId = requireAuth(req, res); if (userId == null) return;
+      const { status, data } = pushRoutes.subscribePush('user', userId, body);
+      return sendJson(res, status, data);
+    }
+
+    // Désabonnement — même exigence d'authentification que l'abonnement (admin OU joueur/
+    // agent connecté), pour qu'un visiteur anonyme ne puisse pas désabonner n'importe quel
+    // endpoint au hasard ; la suppression elle-même ne vérifie pas la propriété au-delà de
+    // ça (voir la note dans routes/push.js).
+    if (pathname === '/api/push/unsubscribe' && method === 'POST') {
+      if (!isAdmin(req)) {
+        const userId = requireAuth(req, res); if (userId == null) return;
+      }
+      const { status, data } = pushRoutes.unsubscribePush(body);
       return sendJson(res, status, data);
     }
 

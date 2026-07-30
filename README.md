@@ -55,6 +55,8 @@ Sur mobile, ouvrez l'URL dans Chrome puis choisissez "Ajouter à l'écran d'accu
 | `AGENT_REFILL_FEE_PERCENT` | Part d'un renflouement gardée par Konkou (le reste devient du crédit revendable) | 7 |
 | `AGENT_REFILL_MIN_HTG` | Montant minimum d'une demande de renflouement | 100 |
 | `ADMIN_PASSWORD` | Mot de passe pour accéder à `/admin.html` (retraits, vérifications, dépôts, candidatures agent, renflouements, revenus) — **à changer avant tout usage réel** | valeur de dev |
+| `VAPID_PUBLIC_KEY` / `VAPID_PRIVATE_KEY` | **Optionnel** — paire de clés pour les notifications push (voir section dédiée ci-dessous). Générées une seule fois avec `node backend/generate-vapid-keys.js`, jamais régénérées ensuite. Sans elles, l'app fonctionne normalement, seul le bouton "🔔 Activer les notifications" affiche une erreur. | *(à générer)* |
+| `VAPID_SUBJECT` | Identifie votre serveur auprès des services de push (FCM/Mozilla...) — un email `mailto:` ou une URL `https://` conviennent | `mailto:contact@konkouapp.com` |
 
 ## Fonctionnalités incluses
 
@@ -230,6 +232,23 @@ Si le message attendu n'arrive jamais (numéro invalide, joueur qui abandonne) o
 Une demande expire après 10 minutes si elle n'est pas confirmée ; le joueur peut relancer avec le bouton "Relancer" dans l'app. **`OPERATOR_WHATSAPP_NUMBER` doit être configuré pour que ce parcours fonctionne** — sans lui, personne ne peut activer un compte ni réinitialiser un mot de passe.
 
 Si vous branchez un jour un vrai fournisseur SMS, ce mécanisme peut être remplacé : la logique d'émission/validation des codes vit entièrement dans `backend/otp.js`, c'est le seul fichier à modifier en profondeur (`backend/sms.js`, déjà présent avec un exemple Twilio commenté, reste disponible pour ça).
+
+## Notifications push (joueur/agent ET admin)
+
+En complément du sondage automatique déjà en place (l'app vérifie l'état d'une demande toutes les 3 secondes tant que l'écran reste ouvert), Konkou peut aussi envoyer une **vraie notification système** — visible même l'app/l'onglet fermé, comme une notification WhatsApp ou Messenger — dès que :
+
+- un joueur/agent **admin** : une nouvelle inscription ou une nouvelle demande de réinitialisation de mot de passe attend une confirmation dans "Vérifications" ;
+- un **joueur/agent** : sa demande de réinitialisation de mot de passe vient d'être autorisée par un admin (voir "Confirmation par WhatsApp" ci-dessus) — le moment précis où il doit revenir dans l'app choisir son nouveau mot de passe.
+
+**Comment l'activer.** Depuis Profil (joueur), Espace Agent, ou Réglages (admin), un bouton "🔔 Activer les notifications" demande la permission du navigateur puis enregistre l'appareil. C'est **opt-in par appareil** : chaque téléphone/navigateur doit l'activer séparément, et un joueur peut se désabonner à tout moment (🔕 Désactiver) sans perdre son compte.
+
+**Config serveur requise (`VAPID_PUBLIC_KEY`/`VAPID_PRIVATE_KEY`/`VAPID_SUBJECT`, voir tableau plus haut).** Lancez `node backend/generate-vapid-keys.js` **une seule fois**, copiez les deux valeurs affichées dans les variables d'environnement Render (jamais régénérées ensuite : voir l'avertissement affiché par le script). Sans ces clés, le reste de l'app fonctionne normalement — seul le bouton "🔔 Activer" affiche une erreur explicite.
+
+**Sur iPhone/iPad**, les notifications push web n'existent que si l'app a été **ajoutée à l'écran d'accueil** ("Ajouter à l'écran d'accueil" depuis Safari) et sur iOS 16.4 ou plus récent — une contrainte d'Apple, pas de Konkou. Sur Android et ordinateur, ça fonctionne directement dans le navigateur, sans installation.
+
+**Choix technique — zéro dépendance, même ici.** Contrairement à la quasi-totalité des implémentations Web Push (qui utilisent le paquet npm `web-push`), Konkou réimplémente le protocole à la main avec les seuls modules natifs de Node (`node:crypto`) : le jeton d'authentification VAPID (RFC 8292) et le chiffrement du contenu (RFC 8291 + RFC 8188 "aes128gcm"), voir `backend/webpush.js`. Chaque brique a été vérifiée par un test qui rejoue indépendamment le déchiffrement "côté navigateur" (avec sa propre implémentation, pas en rappelant les mêmes fonctions) et confirme que le message reçu correspond exactement à l'original, plus un aller-retour HTTP complet contre un faux service de push local — la seule façon de valider ce protocole sans un vrai service (FCM/Mozilla) ni un vrai navigateur.
+
+Le service de push ne voit jamais le contenu en clair (uniquement le navigateur destinataire peut le déchiffrer, avec la clé qu'il a lui-même générée à l'abonnement) ; un abonnement que le service de push signale comme expiré (HTTP 404/410 — appareil désinstallé, cache navigateur vidé, etc.) est automatiquement retiré de la base au prochain envoi, sans action requise de l'utilisateur.
 
 ## Suppression de compte
 
@@ -599,6 +618,19 @@ Testé (script Node sur base de test jetable) : une demande sans mot de passe es
 Cause : le champ numéro de cet écran était un simple `<input>` texte, sans le préfixe "+509" automatique qu'ont tous les autres champs téléphone de l'app (connexion, inscription, inscription agent — voir `phoneField()` dans `frontend/app.js`). La personne tapait donc ses 8 chiffres locaux par réflexe, exactement comme partout ailleurs dans l'app — mais ce champ-ci envoyait ces 8 chiffres tels quels au serveur, qui cherche en base un numéro au format complet `509XXXXXXXX`. Aucune correspondance trouvée → `forgotPassword()` répond volontairement de façon neutre (`{ message: 'Si ce numéro est enregistré...' }`, sans `code` ni `whatsappLink`) pour ne pas révéler si un numéro est enregistré ou non (protection anti-énumération déjà en place avant cette refonte) — sans qu'aucune ligne ne soit créée dans `otp_codes`. Résultat côté frontend : `bindForgotRequestEvents()` voit l'absence de `data.code` et revient simplement à l'écran de connexion avec ce message, sans jamais afficher d'erreur explicite — donc rien ne laissait deviner qu'il s'agissait d'un format de numéro invalide plutôt que d'un fonctionnement normal.
 
 Corrigé : le champ utilise maintenant `phoneField('phone')` (préfixe "+509" visuel fixe + 8 chiffres locaux attendus, identique aux autres formulaires), et `bindForgotRequestEvents()` reconstitue le numéro complet avant l'envoi (`fd.phone = \`509\${fd.phone}\`;`), exactement comme le fait déjà `bindAuthEvents()` pour la connexion/l'inscription. Reproduit et vérifié par un test curl direct sur l'API : un numéro envoyé sans préfixe déclenche bien le message générique (comportement anti-énumération inchangé et toujours voulu), le même numéro envoyé avec le préfixe complet crée bien une vraie demande (`code` + `whatsappLink` renvoyés).
+
+**Notifications push (juillet 2026).** Voir "Notifications push" plus haut pour le fonctionnement complet côté utilisateur. Résumé technique :
+
+- **`backend/webpush.js`** (nouveau) : réimplémentation à la main du protocole Web Push avec `node:crypto` uniquement (VAPID/RFC 8292 + chiffrement aes128gcm/RFC 8291+8188) — voir le fichier pour le détail, chaque étape suit la RFC au pied de la lettre plutôt qu'une version simplifiée, un service de push réel rejetant silencieusement tout message mal formé.
+- **`backend/routes/push.js`** (nouveau) : `getVapidPublicKeyRoute()`, `subscribePush(subjectType, userId, body)` (upsert par `endpoint`), `unsubscribePush(body)`, et l'orchestration `notifyAdmins(payload)`/`notifyUser(userId, payload)` — fire-and-forget, best-effort (n'échoue et ne ralentit jamais l'action métier qui déclenche l'envoi), nettoie automatiquement tout abonnement signalé expiré (404/410).
+- **`backend/db.js`** : nouvelle table `push_subscriptions` (`subject_type` 'admin'|'user', `user_id` NULL pour un admin, `endpoint` UNIQUE, `p256dh`, `auth`).
+- **`backend/generate-vapid-keys.js`** (nouveau) : script à lancer une seule fois pour générer `VAPID_PUBLIC_KEY`/`VAPID_PRIVATE_KEY`.
+- **Déclencheurs déjà branchés** : `register()` et `forgotPassword()` (`routes/auth.js`) notifient tous les admins abonnés ; `confirmPasswordReset()` (`routes/admin.js`) notifie le joueur/agent concerné dès que sa demande est autorisée.
+- **`frontend/sw.js`** : gestionnaires `push` (affiche la notification système) et `notificationclick` (ramène au premier plan un onglet Konkou déjà ouvert, ou en ouvre un nouveau sur l'écran pertinent).
+- **`frontend/push-client.js`** (nouveau, importé à la fois par `app.js` et `admin.js` — les deux sont chargés en `type="module"`) : `subscribeToPush()`/`unsubscribeFromPush()`/`isPushSubscribed()`, plus le bloc UI partagé `notificationsToggleHtml()`/`bindNotificationsToggleEvents()` (bouton "🔔 Activer"/"🔕 Désactiver").
+- **`frontend/admin.html`** : ajout de `sw-register.js` — n'enregistrait jusqu'ici aucun service worker (contrairement à `index.html`), pourtant requis par `PushManager`.
+
+Testé (scripts Node jetables, jamais sur `backend/konkou.db`) : le chiffrement/VAPID est vérifié par un déchiffrement indépendant "côté navigateur" (implémentation séparée, pas un rappel des mêmes fonctions) confirmant une correspondance exacte avec le payload d'origine, y compris via un aller-retour HTTP complet contre un faux service de push local (en-têtes `Content-Encoding`/`Authorization`/`TTL` vérifiés) ; un déchiffrement avec le mauvais secret d'authentification échoue bien ; une réponse 410 déclenche le nettoyage de l'abonnement ; `register()`/`forgotPassword()`/`confirmPasswordReset()` déclenchent réellement une notification vers le bon destinataire (et vers lui seul) une fois abonné, et ne plantent jamais si les clés VAPID ne sont pas configurées.
 
 ## Structure du projet
 

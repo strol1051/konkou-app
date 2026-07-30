@@ -4,7 +4,7 @@
 // network-first pour l'app shell : on sert toujours la version la plus récente quand
 // une connexion est disponible, et on ne retombe sur le cache qu'hors-ligne.
 const CACHE_NAME = 'konkou-shell-v2';
-const SHELL_FILES = ['/', '/index.html', '/styles.css', '/app.js', '/manifest.json', '/icon.png', '/logo.png', '/logo-watermark.png'];
+const SHELL_FILES = ['/', '/index.html', '/styles.css', '/app.js', '/push-client.js', '/manifest.json', '/icon.png', '/logo.png', '/logo-watermark.png'];
 
 self.addEventListener('install', (event) => {
   event.waitUntil(
@@ -41,5 +41,59 @@ self.addEventListener('fetch', (event) => {
         return response;
       })
       .catch(() => caches.match(event.request))
+  );
+});
+
+// ---------- Notifications push (voir backend/webpush.js, juillet 2026) ----------
+// Le service worker est la SEULE partie de l'app qui reste "vivante" (rappelée par le
+// système) même quand aucun onglet Konkou n'est ouvert — c'est pourquoi le protocole Web
+// Push exige que ce soit lui, et non app.js/admin.js, qui reçoive l'évènement 'push' et
+// affiche la notification système.
+
+// Le navigateur a déjà déchiffré le message (voir backend/webpush.js pour le chiffrement
+// correspondant côté serveur) avant de déclencher cet évènement — event.data.json() donne
+// directement l'objet { title, body, url } envoyé par notifyAdmins()/notifyUser() (voir
+// routes/push.js). Si jamais le payload est absent/invalide (ne devrait jamais arriver vu
+// le format contrôlé côté serveur, mais un service worker qui plante sur un évènement
+// 'push' peut faire perdre le "budget" de notifications que le navigateur accorde par
+// abonnement), on retombe sur un titre générique plutôt que d'échouer silencieusement.
+self.addEventListener('push', (event) => {
+  let data = {};
+  try { data = event.data ? event.data.json() : {}; } catch { data = {}; }
+
+  const title = data.title || 'Konkou';
+  const options = {
+    body: data.body || '',
+    icon: '/icon.png', // affichée dans la notification elle-même
+    badge: '/icon.png', // petite icône monochrome (barre de notif Android) — même fichier, le navigateur l'adapte
+    data: { url: data.url || '/' } // récupéré par 'notificationclick' ci-dessous
+  };
+
+  // event.waitUntil garde le service worker actif le temps que showNotification() se
+  // termine — sans ça, le navigateur pourrait le stopper avant que la notification soit
+  // effectivement créée, surtout sur un appareil qui essaie d'économiser la batterie.
+  event.waitUntil(self.registration.showNotification(title, options));
+});
+
+// Un tap sur la notification doit amener la personne DANS l'app, sur l'écran pertinent
+// (`data.url`, ex: '/' pour un joueur qui doit choisir un nouveau mot de passe, '/admin.html'
+// pour un admin qui doit confirmer une vérification) — pas simplement fermer la notification.
+self.addEventListener('notificationclick', (event) => {
+  event.notification.close();
+  const targetUrl = event.notification.data?.url || '/';
+
+  event.waitUntil(
+    self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then((clientsArr) => {
+      // Si Konkou est déjà ouvert dans un onglet (même sur un autre écran de l'app), on le
+      // ramène au premier plan plutôt que d'en ouvrir un second — plus proche du
+      // comportement attendu d'une vraie notification d'app native.
+      const existing = clientsArr.find((c) => c.url.startsWith(self.location.origin));
+      if (existing) {
+        return existing.focus().then(() => {
+          if ('navigate' in existing) return existing.navigate(targetUrl);
+        });
+      }
+      return self.clients.openWindow(targetUrl);
+    })
   );
 });

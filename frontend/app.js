@@ -1,6 +1,7 @@
 // Konkou - application front-end (vanilla JS, aucune dépendance / aucun build requis)
 
 import { startGameMusic, stopGameMusic, toggleMusic, isMusicEnabled } from './music.js';
+import { isPushSubscribed, notificationsToggleHtml, bindNotificationsToggleEvents } from './push-client.js';
 
 const APP = document.getElementById('app');
 
@@ -34,6 +35,29 @@ function phoneField(name) {
         placeholder="37123456" title="8 chiffres, sans le +509" required />
     </div>
   `;
+}
+
+// Bouton "🔔 Activer les notifications" / "🔕 Désactiver les notifications" (juillet 2026,
+// voir push-client.js pour la logique partagée avec admin.js) — même bloc réutilisé dans
+// Profil (joueur) et les 3 écrans Espace Agent (en attente/rejeté/tableau de bord, voir
+// agentDeleteAccountBlock()). Ces deux wrappers ne font qu'adapter le module partagé au
+// state/setState propres à app.js — voir push-client.js pour le détail de la logique
+// d'abonnement elle-même.
+function appNotificationsToggleHtml() {
+  return notificationsToggleHtml(state.pushSubscribed, "Soyez prévenu·e directement sur cet appareil dès qu'une action de votre part est possible (ex : réinitialisation de mot de passe autorisée) — même l'app fermée.");
+}
+
+// Partagé par bindProfileEvents() et bindAgentEvents() — l'élément #notifications-toggle-btn
+// n'existe que sur un seul écran à la fois donc pas de risque de double-binding.
+function bindAppNotificationsToggleEvents() {
+  bindNotificationsToggleEvents(api, state.pushSubscribed, (result) => {
+    if (result.status === 'subscribed') { setState({ pushSubscribed: true, error: '', success: 'Notifications activées sur cet appareil.' }); return; }
+    if (result.status === 'unsubscribed') { setState({ pushSubscribed: false, error: '', success: 'Notifications désactivées sur cet appareil.' }); return; }
+    if (result.status === 'unsupported') { setState({ error: "Ce navigateur/appareil ne prend pas en charge les notifications (sur iPhone, l'app doit d'abord être ajoutée à l'écran d'accueil)." }); return; }
+    if (result.status === 'denied') { setState({ error: "Permission refusée — activez les notifications pour ce site dans les réglages de votre navigateur, puis réessayez." }); return; }
+    if (result.status === 'dismissed') { return; } // fenêtre système fermée sans choix — pas d'erreur à afficher
+    setState({ error: result.error || 'Erreur inconnue lors de l\'activation des notifications.' });
+  });
 }
 
 // Champs NatCash/MonCash + plan de remboursement (juillet 2026) — communs aux deux
@@ -344,6 +368,18 @@ async function applyThemeFromServer() {
 }
 applyThemeFromServer();
 
+// Vérifié une fois au chargement, en tâche de fond — pas d'attente ni d'écran de chargement
+// pour ça, puisque ça ne fait que corriger le libellé initial du bouton "🔔 Activer les
+// notifications" (voir notificationsToggleHtml() plus bas) le temps que ça arrive ; jusque-là,
+// il affiche par défaut "🔔 Activer" (state.pushSubscribed commence à false), ce qui est sans
+// conséquence puisque personne n'atteint l'écran Profil/Espace Agent avant que ceci ait eu le
+// temps de se résoudre dans la quasi-totalité des cas réels.
+async function refreshPushSubscribedState() {
+  const subscribed = await isPushSubscribed();
+  if (subscribed !== state.pushSubscribed) state.pushSubscribed = subscribed; // pas de render() ici, voir commentaire ci-dessus
+}
+refreshPushSubscribedState();
+
 // Panneau publicitaire (juillet 2026, voir /admin.html → Réglages) — image au format
 // portrait affichée une fois par session (joueur ET agent), fermable via un bouton (x).
 // "Une fois par session" est interprété ici comme "une fois par chargement de page" :
@@ -425,7 +461,14 @@ const state = {
   // joueur — isAgent bascule le rendu vers un shell entièrement séparé (voir render()
   // et renderAgentShell()), sans tabbar ni accès jeux/portefeuille/classement/profil.
   isAgent: false,
-  agentScreen: 'main' // 'main' | 'contact' — uniquement pertinent quand isAgent est vrai
+  agentScreen: 'main', // 'main' | 'contact' — uniquement pertinent quand isAgent est vrai
+  // Vrai si CET appareil a déjà un abonnement aux notifications push actif (voir
+  // push-client.js) — rafraîchi une fois au chargement (refreshPushSubscribedState() plus
+  // bas) puis après chaque activation/désactivation manuelle. Uniquement utilisé pour
+  // choisir le libellé du bouton "🔔 Activer"/"🔕 Désactiver" dans Profil/Espace Agent ; ne
+  // reflète jamais un état "par compte" (le serveur ne sait que quels endpoints précis sont
+  // enregistrés, jamais si CET appareil-ci en fait partie avant qu'on ne le lui demande).
+  pushSubscribed: false
 };
 
 function setState(patch) {
@@ -2108,6 +2151,7 @@ function profileHtml(data) {
       <p>Partagez votre code pour gagner 50 pts par ami inscrit :</p>
       <p style="font-size:22px; font-weight:800; letter-spacing:2px; text-align:center;">${data.referralCode}</p>
     </div>
+    ${appNotificationsToggleHtml()}
     <button class="secondary" id="contact-btn">📞 Nous contacter</button>
     <button class="secondary" id="logout-btn">Se déconnecter</button>
     ${confirmingDeleteAccount ? `
@@ -2131,6 +2175,7 @@ function profileHtml(data) {
 let confirmingDeleteAccount = false;
 
 function bindProfileEvents() {
+  bindAppNotificationsToggleEvents();
   const contactBtn = document.getElementById('contact-btn');
   if (contactBtn) contactBtn.addEventListener('click', () => setState({ view: 'contact', error: '', success: '' }));
   const btn = document.getElementById('logout-btn');
@@ -2176,6 +2221,7 @@ function agentDeleteAccountBlock(agentOrDash) {
   if (creditBalance > 0) parts.push(`<strong>${creditBalance} HTG</strong> de crédit revendable`);
   if (commissionEarned > 0) parts.push(`<strong>${commissionEarned} HTG</strong> de commissions`);
   return `
+    ${appNotificationsToggleHtml()}
     ${confirmingDeleteAccount ? `
       <div class="card" style="border:2px solid var(--red); margin-top:14px;">
         <h2>⚠️ Supprimer mon compte agent</h2>
@@ -2442,6 +2488,7 @@ function refillStatusLabel(status) {
 }
 
 function bindAgentEvents() {
+  bindAppNotificationsToggleEvents();
   const form = document.getElementById('agent-apply-form');
   if (form) {
     form.addEventListener('submit', async (e) => {

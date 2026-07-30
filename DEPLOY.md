@@ -38,7 +38,8 @@ git push -u origin main
 2. Allez dans l'onglet **"Environment"**.
 3. Cliquez sur l'œil à côté de `ADMIN_PASSWORD` pour le révéler, et **notez-le quelque part en sécurité** — c'est le mot de passe pour accéder à `/admin.html` (retraits, vérifications, dépôts).
 4. **Obligatoire** : modifiez `OPERATOR_WHATSAPP_NUMBER` (actuellement `REMPLACER_PAR_VOTRE_NUMERO`) pour y mettre le numéro WhatsApp qui recevra les messages de confirmation d'inscription/réinitialisation, au format E.164 **sans le "+"** (ex. `50937123456`). Sans ça, personne ne peut activer un compte ni réinitialiser un mot de passe — voir "Confirmation par WhatsApp" dans `README.md`.
-5. Cliquez sur **"Save Changes"** — Render redémarre automatiquement le service avec la nouvelle valeur.
+5. **Optionnel** (notifications push, voir "Notifications push" dans `README.md`) : sur votre ordinateur, lancez `node backend/generate-vapid-keys.js` dans le dossier du projet — ça affiche deux valeurs `VAPID_PUBLIC_KEY` et `VAPID_PRIVATE_KEY`. Collez-les dans les variables du même nom (actuellement `REMPLACER (node backend/generate-vapid-keys.js)`). Sans ça, l'app fonctionne normalement, seul le bouton "🔔 Activer les notifications" affichera une erreur.
+6. Cliquez sur **"Save Changes"** — Render redémarre automatiquement le service avec les nouvelles valeurs.
 
 ## Étape 4 — Tester
 

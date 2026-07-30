@@ -48,8 +48,9 @@ export function buildWhatsappLinkToPhone(phone, message) {
 }
 
 // Creates a fresh OTP for (phone, purpose), invalidating any earlier unused code for the same
-// pair. `payload` is an optional string stashed alongside the code (used by password reset to
-// hold the new hashed password until an admin confirms). Returns { ok, error, code, whatsappLink }.
+// pair. `payload` is an optional generic string stashed alongside the code — plus utilisé par
+// reset_password depuis la refonte de juillet 2026 (voir forgotPassword() dans
+// routes/auth.js), conservé pour un futur usage générique. Returns { ok, error, code, whatsappLink }.
 export async function issueOtp(phone, purpose, message, payload = null) {
   const recent = db.prepare(
     `SELECT created_at FROM otp_codes WHERE phone = ? AND purpose = ? ORDER BY id DESC LIMIT 1`

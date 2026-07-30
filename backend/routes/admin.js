@@ -3,6 +3,7 @@ import db from '../db.js';
 import { signToken } from '../utils.js';
 import { adminConfirmOtp, listPendingOtps, rejectOtp, buildWhatsappLinkToPhone } from '../otp.js';
 import { getAgentCapitalFeePercent, formatAgentNumber, fullAgentCode, computeReimbursementStatus } from './agents.js';
+import { notifyUser } from './push.js';
 
 // Single shared password for the person(s) running the cash pickup point. Fine for a
 // one/few-person operation; if you have several agents who need distinct accountability
@@ -129,6 +130,17 @@ export function confirmPasswordReset(body) {
     phone,
     'Konkou — Votre demande de réinitialisation de mot de passe est autorisée. Ouvrez l’application Konkou et entrez votre nouveau mot de passe.'
   );
+
+  // Best-effort, jamais bloquant ni fatal pour cette réponse (voir notifyUser() dans
+  // routes/push.js) : si ce joueur/agent avait déjà activé les notifications lors d'une
+  // session précédente, ceci lui envoie un vrai "ping" système même app fermée — en
+  // complément du lien WhatsApp ci-dessus, pas à sa place (Konkou n'a pas d'API WhatsApp
+  // Business pour l'envoyer automatiquement, voir buildWhatsappLinkToPhone dans otp.js).
+  notifyUser(user.id, {
+    title: 'Konkou — Réinitialisation autorisée',
+    body: 'Ouvrez l’app pour choisir votre nouveau mot de passe.',
+    url: '/'
+  }).catch(() => {});
 
   return {
     status: 200,
@@ -654,7 +666,7 @@ export function resetTestData(body) {
   // "Enfants" avant "parents" — le schéma (voir db.js) ne déclare pas de contraintes FK
   // explicites, donc l'ordre ne casse rien techniquement, mais reste plus propre à lire.
   // "settings" est délibérément absente de cette liste.
-  const tables = ['transactions', 'game_sessions', 'otp_codes', 'cashouts', 'deposits', 'agent_refills', 'agent_reimbursements', 'vip_purchases', 'agents', 'users'];
+  const tables = ['transactions', 'game_sessions', 'otp_codes', 'cashouts', 'deposits', 'agent_refills', 'agent_reimbursements', 'vip_purchases', 'push_subscriptions', 'agents', 'users'];
   for (const table of tables) {
     db.prepare(`DELETE FROM ${table}`).run();
   }

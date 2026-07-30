@@ -74,3 +74,17 @@ services:
       # inscription ou une réinitialisation de mot de passe. Voir DEPLOY.md.
       - key: OPERATOR_WHATSAPP_NUMBER
         value: "REMPLACER_PAR_VOTRE_NUMERO"
+      # OPTIONNEL — notifications push (voir backend/webpush.js, juillet 2026). Sans ces
+      # deux valeurs, l'app fonctionne normalement, seul le bouton "🔔 Activer les
+      # notifications" affichera une erreur. PAS de `generateValue: true` ici (contrairement
+      # à JWT_SECRET/ADMIN_PASSWORD) : les deux valeurs forment une PAIRE DE CLÉS liées
+      # mathématiquement (une clé publique et sa clé privée correspondante) — Render ne peut
+      # pas générer un tel couple, il faut le générer une seule fois avec
+      # `node backend/generate-vapid-keys.js` (en local, avant le premier déploiement, ou
+      # une fois connecté en shell Render) et coller les deux valeurs ici manuellement.
+      - key: VAPID_PUBLIC_KEY
+        value: "REMPLACER (node backend/generate-vapid-keys.js)"
+      - key: VAPID_PRIVATE_KEY
+        value: "REMPLACER (node backend/generate-vapid-keys.js)"
+      - key: VAPID_SUBJECT
+        value: "mailto:contact@konkouapp.com"

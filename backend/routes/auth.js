@@ -2,6 +2,16 @@ import crypto from 'node:crypto';
 import db from '../db.js';
 import { hashPassword, verifyPassword, signToken, PASSWORD_RE, PASSWORD_REQUIREMENTS_MESSAGE, calcAge } from '../utils.js';
 import { issueOtp, checkOtpStatus, consumeConfirmedOtp } from '../otp.js';
+import { notifyAdmins } from './push.js';
+
+// Envoie une notification push à tous les admins abonnés, sans jamais faire échouer ni
+// ralentir la réponse HTTP de la route appelante — voir notifyAdmins() dans routes/push.js
+// pour le détail (best-effort : réseau indisponible, VAPID non configuré, ou aucun admin
+// abonné sont tous des cas silencieusement ignorés ici, jamais une erreur remontée au
+// joueur/agent qui vient de s'inscrire ou de demander une réinitialisation).
+function notifyAdminsSilently(payloadObj) {
+  notifyAdmins(payloadObj).catch(() => {});
+}
 
 function makeReferralCode(name) {
   const base = (name || 'user').replace(/[^a-zA-Z]/g, '').slice(0, 4).toUpperCase() || 'USER';
@@ -106,6 +116,8 @@ export async function register(body) {
     return { status: 429, data: { error: otp.error } };
   }
 
+  notifyAdminsSilently({ title: 'Konkou — Nouvelle inscription', body: `${name} (${phone}) attend une confirmation.`, url: '/admin.html' });
+
   // No auth token yet — the account exists but isn't usable until an admin confirms the
   // WhatsApp message. `code` is not meant to be typed by the user; the frontend keeps it
   // to poll /auth/verify-status once the confirmation happens.
@@ -195,6 +207,8 @@ export async function forgotPassword(body) {
 
   const otp = await issueOtp(phone, 'reset_password', 'Confirmez ma demande de réinitialisation de mot de passe Konkou.');
   if (!otp.ok) return { status: 429, data: { error: otp.error } };
+
+  notifyAdminsSilently({ title: 'Konkou — Réinitialisation demandée', body: `${phone} demande une réinitialisation de mot de passe.`, url: '/admin.html' });
 
   return {
     status: 200,

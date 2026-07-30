@@ -3,6 +3,8 @@
 // Page volontairement séparée de l'app principale (pas de lien depuis app.js) : ce n'est
 // pas un compte utilisateur, c'est un accès protégé par le mot de passe ADMIN_PASSWORD.
 
+import { isPushSubscribed, notificationsToggleHtml, bindNotificationsToggleEvents } from './push-client.js';
+
 const APP = document.getElementById('app');
 
 function escapeHtml(value) {
@@ -233,6 +235,15 @@ async function applyThemeFromServer() {
 }
 applyThemeFromServer();
 
+// Voir la note équivalente sur refreshPushSubscribedState() dans app.js : vérifié une fois
+// en tâche de fond, sans écran de chargement — corrige simplement le libellé initial du
+// bouton "🔔 Activer les notifications" (section Réglages) le temps que ça se résolve.
+async function refreshPushSubscribedState() {
+  const subscribed = await isPushSubscribed();
+  if (subscribed !== state.pushSubscribed) state.pushSubscribed = subscribed; // pas de render() ici, voir app.js
+}
+refreshPushSubscribedState();
+
 // Redimensionne/compresse une photo choisie par l'admin avant de l'envoyer au serveur —
 // une photo de téléphone fait souvent plusieurs Mo, alors que 1600px de large en JPEG
 // qualité 0.82 suffit largement pour un fond d'écran et passe confortablement sous la
@@ -322,6 +333,11 @@ const state = {
   topbarBgImage: '', // URL de la photo dédiée à la barre du haut ('' = dégradé du thème actif)
   logo: '', // URL du logo personnalisé ('' = frontend/logo.png par défaut)
   revenueDate: '', // date choisie pour le filtre "Revenus par jour" ('' = tout l'historique)
+  // Vrai si CE navigateur admin a déjà un abonnement aux notifications push actif (voir
+  // push-client.js) — même principe que state.pushSubscribed dans app.js : rafraîchi une
+  // fois au chargement (refreshPushSubscribedState() plus bas), sert uniquement à choisir
+  // le libellé du bouton dans la section Réglages.
+  pushSubscribed: false,
   error: '',
   success: '',
   loading: false
@@ -779,6 +795,11 @@ function renderSettingsSection() {
       </form>
     </div>
     <div class="card">
+      <h2>🔔 Notifications</h2>
+      <p style="font-size:13px;">Activez les notifications push sur CET appareil/navigateur pour être prévenu·e directement, même l'admin fermé, dès qu'une nouvelle inscription ou une demande de réinitialisation de mot de passe attend une confirmation dans "Vérifications". Nécessite les clés VAPID configurées côté serveur (voir README.md, section "Notifications push") — sans elles, le bouton ci-dessous affichera une erreur explicite.</p>
+      ${notificationsToggleHtml(state.pushSubscribed, "Vous recevrez un signal sur cet appareil dès qu'une action attend votre confirmation — même la fenêtre admin fermée.")}
+    </div>
+    <div class="card">
       <h2>🎨 Thème de l'app</h2>
       <p style="font-size:13px;">Change les couleurs et ajoute un décor animé sur toute l'app (joueur et admin). S'applique immédiatement pour tout le monde au prochain chargement de la page.</p>
       <div class="grid-2" style="grid-template-columns: repeat(2, 1fr);">
@@ -1140,6 +1161,15 @@ function bind() {
   });
   document.querySelectorAll('[data-refill-reject]').forEach(btn => {
     btn.addEventListener('click', () => actOnRefill(btn.dataset.refillReject, 'reject'));
+  });
+
+  bindNotificationsToggleEvents(api, state.pushSubscribed, (result) => {
+    if (result.status === 'subscribed') { setState({ pushSubscribed: true, error: '', success: 'Notifications activées sur cet appareil.' }); return; }
+    if (result.status === 'unsubscribed') { setState({ pushSubscribed: false, error: '', success: 'Notifications désactivées sur cet appareil.' }); return; }
+    if (result.status === 'unsupported') { setState({ error: "Ce navigateur/appareil ne prend pas en charge les notifications." }); return; }
+    if (result.status === 'denied') { setState({ error: "Permission refusée — activez les notifications pour ce site dans les réglages de votre navigateur, puis réessayez." }); return; }
+    if (result.status === 'dismissed') { return; }
+    setState({ error: result.error || 'Erreur inconnue lors de l\'activation des notifications.' });
   });
 
   const lookupForm = document.getElementById('account-lookup-form');
