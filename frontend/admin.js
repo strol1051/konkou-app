@@ -322,6 +322,11 @@ const state = {
   refills: [],
   vip: [],
   revenue: null,
+  players: [], // résultat de /admin/players (onglet "Joueurs") — liste, jamais les agents (voir listPlayers)
+  playersTotal: 0, // nombre total de comptes joueur (non filtré par la recherche)
+  playersMatching: 0, // nombre de comptes correspondant à la recherche actuelle (= playersTotal sans recherche)
+  playersTruncated: false, // vrai si plus de résultats existent que ceux renvoyés (voir PLAYERS_LIST_LIMIT côté serveur)
+  playersSearch: '', // terme de recherche actuel (nom ou téléphone) pour l'onglet "Joueurs"
   accountLookup: null,
   contactWhatsapp: null, // numéro configuré pour "Nous contacter" (null tant que non défini)
   currentTheme: 'default', // thème saisonnier actif (voir THEMES plus haut)
@@ -363,7 +368,7 @@ async function api(path, { method = 'GET', body } = {}) {
 
 function logout() {
   localStorage.removeItem('konkou_admin_token');
-  setState({ token: null, cashouts: [], verifications: [], deposits: [], agents: [], refills: [], vip: [], revenue: null, accountLookup: null, agentsReimbursements: null, agentsReimbursementsHistory: [], error: '', success: '' });
+  setState({ token: null, cashouts: [], verifications: [], deposits: [], agents: [], refills: [], vip: [], revenue: null, players: [], playersSearch: '', accountLookup: null, agentsReimbursements: null, agentsReimbursementsHistory: [], error: '', success: '' });
 }
 
 function render() {
@@ -391,7 +396,7 @@ function renderLogin() {
 }
 
 function renderDashboard() {
-  const sections = [['cashouts', '💸 Retraits'], ['verifications', '💬 Vérifications'], ['deposits', '🎟️ Dépôts'], ['vip', '👑 VIP'], ['agents', '🧑‍💼 Agents'], ['refills', '💳 Renflouements'], ['revenue', '📊 Revenus'], ['accounts', '🗑️ Comptes'], ['settings', '⚙️ Réglages']];
+  const sections = [['cashouts', '💸 Retraits'], ['verifications', '💬 Vérifications'], ['deposits', '🎟️ Dépôts'], ['vip', '👑 VIP'], ['agents', '🧑‍💼 Agents'], ['refills', '💳 Renflouements'], ['revenue', '📊 Revenus'], ['players', '👥 Joueurs'], ['accounts', '🗑️ Comptes'], ['settings', '⚙️ Réglages']];
   return `
     <div class="topbar">
       <img src="${logoUrl}" alt="Konkou" class="topbar-logo">
@@ -420,6 +425,7 @@ function renderSectionBody() {
   if (state.section === 'agents') return renderAgentsSection();
   if (state.section === 'refills') return renderRefillsSection();
   if (state.section === 'revenue') return renderRevenueSection();
+  if (state.section === 'players') return renderPlayersSection();
   if (state.section === 'accounts') return renderAccountsSection();
   if (state.section === 'settings') return renderSettingsSection();
   return '';
@@ -736,6 +742,74 @@ function renderRevenueSection() {
   `;
 }
 
+// ---------- Joueurs (liste, lecture seule) ----------
+// Vue d'ensemble de tous les comptes joueur (jamais les comptes agent, qui ont leur propre
+// onglet "Agents" — voir listPlayers dans backend/routes/account.js). Recherche par nom ou
+// téléphone côté serveur (LIKE, insensible à la casse) plutôt que côté client, pour rester
+// utilisable même avec beaucoup de comptes (voir PLAYERS_LIST_LIMIT côté serveur). Le bouton
+// "🗑️ Gérer" par ligne réutilise directement /admin/accounts/lookup (même route que
+// l'onglet "Comptes") pour sauter droit sur la fiche de suppression de ce joueur, sans
+// dupliquer cette logique ici.
+function playerRowHtml(p) {
+  const vipActive = p.vip_until && new Date(p.vip_until).getTime() > Date.now();
+  return `
+    <tr style="border-bottom:1px solid #ccc;">
+      <td style="padding:6px;">${escapeHtml(p.name)}</td>
+      <td style="padding:6px;">${escapeHtml(p.phone)}</td>
+      <td style="padding:6px; text-align:right;">
+        ${p.points}${p.non_cashable_points > 0 ? `<div style="font-size:11px; color:var(--muted);">dont ${p.non_cashable_points} non retirables</div>` : ''}
+      </td>
+      <td style="padding:6px; text-align:right;">${p.bonus_plays}</td>
+      <td style="padding:6px; text-align:center;">${vipActive ? '👑' : '—'}</td>
+      <td style="padding:6px; text-align:center;">${p.phone_verified ? '✅' : '❌'}</td>
+      <td style="padding:6px;">${escapeHtml(p.created_at)}</td>
+      <td style="padding:6px; text-align:center;"><button class="tile" data-players-manage="${escapeHtml(p.phone)}" style="font-size:12px; padding:6px 8px;">🗑️ Gérer</button></td>
+    </tr>
+  `;
+}
+
+function renderPlayersSection() {
+  return `
+    <div class="card" style="margin-top:14px;">
+      <h2>👥 Joueurs inscrits</h2>
+      <p style="font-size:13px;">
+        ${state.playersSearch
+          ? `${state.playersMatching} résultat(s) pour "${escapeHtml(state.playersSearch)}" sur ${state.playersTotal} joueur(s) au total.`
+          : `${state.playersTotal} joueur(s) inscrit(s) au total.`}
+        ${state.playersTruncated ? ' Affichage limité aux comptes les plus récents — affinez la recherche pour voir un compte plus ancien.' : ''}
+      </p>
+      <form id="players-search-form" style="display:flex; gap:10px;">
+        <input name="search" placeholder="Rechercher par nom ou téléphone" value="${escapeHtml(state.playersSearch)}" style="margin-bottom:0; flex:1;" />
+        <button class="primary" type="submit" style="margin:0;">Rechercher</button>
+      </form>
+      ${state.playersSearch ? `<button class="secondary" id="players-search-reset-btn" type="button" style="margin-top:8px;">Réinitialiser</button>` : ''}
+    </div>
+    <div class="card">
+      ${state.players.length === 0 ? `<p>Aucun joueur${state.playersSearch ? ' ne correspond à cette recherche' : ' inscrit pour le moment'}.</p>` : `
+        <div style="overflow-x:auto;">
+          <table style="width:100%; border-collapse:collapse; font-size:13px;">
+            <thead>
+              <tr style="border-bottom:2px solid #333;">
+                <th style="text-align:left; padding:6px;">Nom</th>
+                <th style="text-align:left; padding:6px;">Téléphone</th>
+                <th style="text-align:right; padding:6px;">Points</th>
+                <th style="text-align:right; padding:6px;">Parties bonus</th>
+                <th style="text-align:center; padding:6px;">VIP</th>
+                <th style="text-align:center; padding:6px;">Vérifié</th>
+                <th style="text-align:left; padding:6px;">Inscrit le</th>
+                <th style="padding:6px;"></th>
+              </tr>
+            </thead>
+            <tbody>
+              ${state.players.map(playerRowHtml).join('')}
+            </tbody>
+          </table>
+        </div>
+      `}
+    </div>
+  `;
+}
+
 // ---------- Comptes (suppression agent/joueur) ----------
 function renderAccountsSection() {
   return `
@@ -1022,6 +1096,24 @@ async function loadRevenue() {
   }
 }
 
+async function loadPlayers() {
+  setState({ loading: true, error: '' });
+  try {
+    const query = state.playersSearch ? `?search=${encodeURIComponent(state.playersSearch)}` : '';
+    const data = await api(`/admin/players${query}`);
+    setState({
+      players: data.players,
+      playersTotal: data.totalPlayers,
+      playersMatching: data.matching,
+      playersTruncated: data.truncated,
+      loading: false
+    });
+  } catch (err) {
+    if (err.status === 401) { logout(); return; }
+    setState({ error: err.message, loading: false });
+  }
+}
+
 async function loadContactSettings() {
   setState({ loading: true, error: '' });
   try {
@@ -1045,6 +1137,7 @@ function loadSection() {
   if (state.section === 'agents') return loadAgents();
   if (state.section === 'refills') return loadRefills();
   if (state.section === 'revenue') return loadRevenue();
+  if (state.section === 'players') return loadPlayers();
   if (state.section === 'settings') return loadContactSettings();
 }
 
@@ -1170,6 +1263,32 @@ function bind() {
     if (result.status === 'denied') { setState({ error: "Permission refusée — activez les notifications pour ce site dans les réglages de votre navigateur, puis réessayez." }); return; }
     if (result.status === 'dismissed') { return; }
     setState({ error: result.error || 'Erreur inconnue lors de l\'activation des notifications.' });
+  });
+
+  const playersSearchForm = document.getElementById('players-search-form');
+  if (playersSearchForm) {
+    playersSearchForm.addEventListener('submit', (e) => {
+      e.preventDefault();
+      const search = new FormData(e.target).get('search');
+      state.playersSearch = (search || '').trim();
+      loadPlayers();
+    });
+  }
+  document.getElementById('players-search-reset-btn')?.addEventListener('click', () => {
+    state.playersSearch = '';
+    loadPlayers();
+  });
+  document.querySelectorAll('[data-players-manage]').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      const phone = btn.dataset.playersManage;
+      try {
+        const data = await api(`/admin/accounts/lookup?phone=${encodeURIComponent(phone)}`);
+        setState({ section: 'accounts', accountLookup: data, error: '', success: '' });
+      } catch (err) {
+        if (err.status === 401) { logout(); return; }
+        setState({ error: err.message });
+      }
+    });
   });
 
   const lookupForm = document.getElementById('account-lookup-form');

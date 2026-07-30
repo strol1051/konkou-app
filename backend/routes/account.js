@@ -117,6 +117,53 @@ export function lookupAccount(phone) {
   return { status: 200, data: { user, agent: agent || null } };
 }
 
+// Liste des comptes JOUEUR pour l'onglet "Joueurs" de /admin.html — exclut délibérément
+// tout compte lié à une ligne "agents" (peu importe son statut), qui a déjà son propre
+// onglet "Agents" avec ses propres informations (crédit, commissions...) non pertinentes
+// ici. `search` (optionnel) filtre par correspondance partielle sur le téléphone OU le nom
+// (insensible à la casse pour le nom, LIKE gère nativement les deux). Plafonné à
+// PLAYERS_LIST_LIMIT résultats, les plus récents en premier — au-delà, la recherche sert à
+// affiner plutôt que de renvoyer un payload disproportionné sur une base avec beaucoup de
+// comptes ; `truncated` indique au frontend qu'il existe plus de résultats que ceux renvoyés.
+const PLAYERS_LIST_LIMIT = 500;
+
+export function listPlayers(search) {
+  const term = search && String(search).trim();
+
+  const totalPlayers = db.prepare(
+    `SELECT COUNT(*) as c FROM users WHERE id NOT IN (SELECT user_id FROM agents)`
+  ).get().c;
+
+  let matching, rows;
+  if (term) {
+    const like = `%${term}%`;
+    matching = db.prepare(
+      `SELECT COUNT(*) as c FROM users WHERE id NOT IN (SELECT user_id FROM agents) AND (phone LIKE ? OR name LIKE ?)`
+    ).get(like, like).c;
+    rows = db.prepare(`
+      SELECT id, phone, name, points, non_cashable_points, bonus_plays, vip_until, phone_verified, created_at
+      FROM users
+      WHERE id NOT IN (SELECT user_id FROM agents) AND (phone LIKE ? OR name LIKE ?)
+      ORDER BY created_at DESC
+      LIMIT ${PLAYERS_LIST_LIMIT}
+    `).all(like, like);
+  } else {
+    matching = totalPlayers;
+    rows = db.prepare(`
+      SELECT id, phone, name, points, non_cashable_points, bonus_plays, vip_until, phone_verified, created_at
+      FROM users
+      WHERE id NOT IN (SELECT user_id FROM agents)
+      ORDER BY created_at DESC
+      LIMIT ${PLAYERS_LIST_LIMIT}
+    `).all();
+  }
+
+  return {
+    status: 200,
+    data: { totalPlayers, matching, truncated: matching > rows.length, players: rows }
+  };
+}
+
 // Admin-triggered deletion (agent or player). Deliberately enforces the exact same
 // guardrails as self-deletion rather than offering a "force" override — if money is
 // still owed, the admin resolves it first through the normal pay/reject flows, then

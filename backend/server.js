@@ -686,6 +686,12 @@ const server = http.createServer(async (req, res) => {
       return sendJson(res, status, data);
     }
 
+    if (pathname === '/api/admin/players' && method === 'GET') {
+      if (!requireAdmin(req, res)) return;
+      const { status, data } = accountRoutes.listPlayers(url.searchParams.get('search'));
+      return sendJson(res, status, data);
+    }
+
     if (pathname === '/api/admin/accounts/lookup' && method === 'GET') {
       if (!requireAdmin(req, res)) return;
       const { status, data } = accountRoutes.lookupAccount(url.searchParams.get('phone'));
