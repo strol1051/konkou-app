@@ -46,7 +46,7 @@ services:
       - key: MAX_DEPOSIT_HTG
         value: "2500"
       - key: HTG_PER_BONUS_PLAY
-        value: "50"
+        value: "25"
       - key: DEPOSIT_LOCATION_INFO
         value: "Présentez ce code et votre paiement à votre agent pour recevoir vos parties bonus."
       - key: DEPOSIT_FEE_PERCENT

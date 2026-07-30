@@ -15,7 +15,13 @@ function generateDepositCode() {
 
 export function getMinDeposit() { return parseFloat(process.env.MIN_DEPOSIT_HTG || '100'); }
 export function getMaxDeposit() { return parseFloat(process.env.MAX_DEPOSIT_HTG || '2500'); }
-export function getHtgPerPlay() { return parseFloat(process.env.HTG_PER_BONUS_PLAY || '50'); }
+// Passé de 50 à 25 HTG/partie (juillet 2026) après une revue de rentabilité — voir le
+// changelog dans README.md ("HTG_PER_BONUS_PLAY abaissé...") pour le calcul complet.
+// Résumé : le passif potentiel d'une partie bonus (points gagnés, convertibles en HTG
+// retirable) reste largement couvert par les 5% de frais de dépôt tant que le taux de
+// réussite moyen des joueurs reste sous ~40-47% — au-delà, chaque partie bonus coûte en
+// moyenne plus qu'elle ne rapporte de frais.
+export function getHtgPerPlay() { return parseFloat(process.env.HTG_PER_BONUS_PLAY || '25'); }
 // Combien de points (non retirables — voir postDeposit) 1 HTG net achète (juillet 2026).
 // Contrairement à HTG_PER_BONUS_PLAY (HTG requis pour 1 partie), exprimé dans l'autre
 // sens car les points s'achètent en petites quantités variables plutôt que par palier fixe.

@@ -41,7 +41,7 @@ Sur mobile, ouvrez l'URL dans Chrome puis choisissez "Ajouter à l'écran d'accu
 | `CASHOUT_FEE_TIER2_MAX_HTG` / `CASHOUT_FEE_TIER2_PERCENT` | Plafond et taux du 2e palier de frais de retrait | 5000 / 14 |
 | `CASHOUT_FEE_TIER3_PERCENT` | Taux du 3e palier (au-delà de `CASHOUT_FEE_TIER2_MAX_HTG`, jusqu'à `MAX_DAILY_CASHOUT_HTG`) | 16 |
 | `MIN_DEPOSIT_HTG` / `MAX_DEPOSIT_HTG` | Bornes d'un dépôt chez l'agent (achat de parties bonus) | 100 / 2500 |
-| `HTG_PER_BONUS_PLAY` | Combien de HTG déposés donnent 1 partie bonus | 50 |
+| `HTG_PER_BONUS_PLAY` | Combien de HTG (nets, après frais de dépôt) donnent 1 partie bonus | 25 |
 | `POINTS_PER_HTG_PURCHASE` | Combien de points (non retirables) 1 HTG net achète, en dépôt "points" | 10 |
 | `DEPOSIT_LOCATION_INFO` | Texte affiché au joueur expliquant comment finaliser un dépôt chez l'agent | phrase générique |
 | `DEPOSIT_FEE_PERCENT` | Frais de service prélevé sur chaque dépôt (parties bonus ou points), avant de calculer le montant accordé | 5 |
@@ -645,6 +645,15 @@ Testé (scripts Node jetables, jamais sur `backend/konkou.db`) : le chiffrement/
 Toutes ces notifications suivent le même principe "fire-and-forget" déjà en place (voir `notifyUser`/`notifyAdmins` dans `routes/push.js`) : jamais attendues, jamais capables de faire échouer l'action métier qui les déclenche.
 
 Testé (script Node jetable, base de test jetable, `fetch` global remplacé par un faux service de push qui capture les envois plutôt que de les envoyer réellement) : les 12 scénarios couvrant les 4 types de demande × leurs déclencheurs (nouvelle demande, confirmation/rejet côté agent quand applicable, confirmation/rejet côté admin) envoient chacun exactement une notification, et toujours au bon destinataire (jamais à l'agent au lieu du joueur, ni l'inverse).
+
+**`HTG_PER_BONUS_PLAY` abaissé de 50 à 25 HTG/partie (juillet 2026).** Remontée : 100 HTG déposés ne donnaient qu'1 seule partie bonus (95 HTG net après les 5% de frais de dépôt, divisé par 50), jugé insuffisant. Avant de changer la valeur, calcul de rentabilité complet pour vérifier qu'un tarif plus généreux reste sûr :
+
+- Le frais de dépôt (5%, encaissé cash, immédiat) ne change pas avec ce réglage — celui-ci ne fait que déterminer combien de parties un même dépôt accorde, donc seul le passif potentiel (valeur en points qu'un joueur pourrait un jour retirer en cash) augmente quand le prix par partie baisse.
+- Plafond théorique de ce passif : une partie *parfaite* (100% de bonnes réponses) vaut au plus 50 pts (trivia, 5×10) ou 48 pts (sprint, 8×6), soit ≈ 3,92 HTG au taux actuel (`POINTS_TO_HTG_RATE` = 0,08 HTG/pt) — un chiffre à multiplier par le taux de réussite moyen réel des joueurs, forcément inférieur à 100%.
+- Point important découvert pendant l'analyse : les parties bonus, contrairement aux parties gratuites, ne sont **pas plafonnées par jour** (`playAllowance()` dans `routes/games.js`) — un joueur qui a un stock de parties bonus peut les enchaîner sans limite, donc le scénario à couvrir est bien celui d'un joueur qui grind, pas seulement le joueur occasionnel.
+- Seuil de rentabilité (prix plancher qui reste rentable même si tous les points gagnés finissent retirés) : `P* ≈ 74,5 × s` HTG/partie, où `s` est le taux de réussite moyen exprimé en fraction (ex. `s = 0,5` pour 50% de bonnes réponses). À 25 HTG/partie, ce seuil correspond à un taux de réussite moyen d'environ 34% — largement en dessous de ce qu'un joueur engagé obtient normalement sur des questions chronométrées, ce qui laisse une marge de sécurité confortable (contre un seuil d'environ 20% à 15 HTG/partie, jugé trop risqué et écarté).
+
+Changement de code minimal : seule la valeur par défaut de `HTG_PER_BONUS_PLAY` change (`backend/.env`, `render.yaml`, `getHtgPerPlay()` dans `routes/deposits.js`) — aucune autre logique touchée. 100 HTG déposés donnent désormais 3 parties bonus au lieu d'1.
 
 ## Structure du projet
 
