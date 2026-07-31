@@ -664,6 +664,12 @@ Changement de code minimal : seule la valeur par défaut de `HTG_PER_BONUS_PLAY`
 
 Testé (script Node jetable, base de test jetable) : `listPlayers(null)` renvoie exactement les comptes joueur (jamais un compte agent, même actif), la recherche par nom et par téléphone trouve chacune le bon compte par correspondance partielle insensible à la casse, une recherche sans résultat renvoie une liste vide sans erreur, `totalPlayers` reste le total non filtré même avec une recherche active, et le tri par date d'inscription décroissante est correct.
 
+**Correctif : message d'erreur technique du navigateur sur le formulaire de retrait (juillet 2026).** Remonté par un test en conditions réelles : un joueur avec moins de points retirables que le minimum requis (6250 pts, soit 500 HTG) voyait un message du navigateur du type *"La valeur minimale (6250) doit être inférieure à la valeur maximale (0)"* au lieu d'une explication compréhensible, à chaque tentative de soumission.
+
+Cause : `<input type="number" min="${minCashoutPoints}" max="${data.withdrawablePoints}">` (`frontend/app.js`, `walletHtml()`) — `min` est fixe (le minimum de retrait), `max` est le solde retirable réel du joueur. Quand ce solde tombe sous le minimum, `min` dépasse `max` : une plage impossible en HTML5, que Chrome/Firefox détectent et signalent avec leur propre message technique plutôt que de laisser l'app afficher quelque chose de clair. Le formulaire de mise (`renderStakePrompt()`, plus haut dans le même fichier) avait déjà exactement ce garde-fou (`maxStake < STAKE_MIN`) — seul le formulaire de retrait ne l'avait pas.
+
+Corrigé en appliquant le même principe : quand `withdrawablePoints < minCashoutPoints`, le formulaire est remplacé par un message explicite ("Vous n'avez pas assez de points retirables... minimum X pts, vous avez Y pts retirables") au lieu de rendre un `<input>` avec une plage invalide. Les formulaires de dépôt (bornes fixes `MIN_DEPOSIT_HTG`/`MAX_DEPOSIT_HTG`) et de renflouement agent (plafond qui ne peut réalistement pas descendre sous le minimum) ne sont pas concernés par ce même bug.
+
 ## Structure du projet
 
 ```

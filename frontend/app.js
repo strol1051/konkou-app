@@ -1866,6 +1866,13 @@ function vipCardHtml(vip, agents) {
 function walletHtml(data, agents, vip) {
   const minCashoutPoints = Math.ceil(data.minCashoutHtg / data.rate);
   const noAgents = agents.length === 0;
+  // Un joueur avec moins de points retirables que le minimum requis rendrait l'input
+  // "points" avec min > max (ex. min="6250" max="0") — une plage impossible en HTML5 que
+  // Chrome/Firefox détectent et signalent avec leur propre message technique ("La valeur
+  // minimale doit être inférieure à la valeur maximale"), à chaque tentative de soumission,
+  // sans jamais expliquer la vraie raison (solde insuffisant). On remplace le formulaire
+  // par un message explicite dans ce cas plutôt que de laisser le navigateur gérer ça.
+  const canCashout = data.withdrawablePoints >= minCashoutPoints;
   return `
     ${state.error ? `<div class="error-banner">${escapeHtml(state.error)}</div>` : ''}
     ${state.lastCashoutCode ? `
@@ -1930,11 +1937,15 @@ function walletHtml(data, agents, vip) {
         const min = i === 0 ? data.minCashoutHtg : arr[i - 1].maxHtg + 1;
         return `${t.percent}% (${min}${t.maxHtg ? `–${t.maxHtg}` : '+'} HTG)`;
       }).join(' · ')}</p>
+      ${canCashout ? `
       <form id="cashout-form">
         <input name="points" type="number" placeholder="Points à retirer" min="${minCashoutPoints}" max="${data.withdrawablePoints}" required />
         ${agentSelectHtml(agents, 'cashout-agent-select')}
         <button class="primary" type="submit" ${noAgents ? 'disabled' : ''}>Générer mon code de retrait</button>
       </form>
+      ` : `
+      <p class="error-banner">Vous n'avez pas assez de points retirables pour demander un retrait — minimum ${minCashoutPoints} pts (${data.minCashoutHtg} HTG), vous avez ${data.withdrawablePoints} pts retirables.</p>
+      `}
     </div>
     <div class="card">
       <h2>🎟️ Acheter chez un agent</h2>
