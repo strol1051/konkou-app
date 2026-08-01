@@ -514,6 +514,20 @@ const server = http.createServer(async (req, res) => {
       return sendJson(res, status, data);
     }
 
+    // Diffusion groupée (juillet 2026) — réservée à l'admin, voir broadcastToPlayers/
+    // broadcastToAgents dans routes/push.js pour le détail (touche uniquement les
+    // appareils déjà abonnés aux notifications, pas la totalité des comptes).
+    if (pathname === '/api/admin/broadcast/players' && method === 'POST') {
+      if (!requireAdmin(req, res)) return;
+      const { status, data } = await pushRoutes.broadcastToPlayers(body);
+      return sendJson(res, status, data);
+    }
+    if (pathname === '/api/admin/broadcast/agents' && method === 'POST') {
+      if (!requireAdmin(req, res)) return;
+      const { status, data } = await pushRoutes.broadcastToAgents(body);
+      return sendJson(res, status, data);
+    }
+
     if (pathname === '/api/admin/login' && method === 'POST') {
       // La route la plus sensible du serveur — limite volontairement plus stricte que
       // le login joueur. Un seul mot de passe partagé (voir routes/admin.js) rend le

@@ -86,3 +86,64 @@ export async function notifyUser(userId, payloadObj) {
     if (result.expired) db.prepare('DELETE FROM push_subscriptions WHERE id = ?').run(sub.id);
   }));
 }
+
+// ---------- Diffusion groupée (juillet 2026) ----------
+// Contrairement à notifyAdmins/notifyUser ci-dessus (effets de bord silencieux d'une
+// AUTRE action métier, jamais attendus par l'appelant), broadcastToPlayers/broadcastToAgents
+// SONT l'action elle-même — déclenchées directement par un bouton admin ("Envoyer une
+// annonce" dans Réglages) — donc elles sont de vrais handlers de route (validation +
+// {status, data}, comme subscribePush/unsubscribePush plus haut) et renvoient un décompte
+// réel, pour que l'admin sache concrètement combien d'appareils ont reçu l'annonce plutôt
+// que de croire à tort que "tous les joueurs/agents" l'ont reçue — voir la mise en garde
+// affichée côté frontend (renderBroadcastSection dans admin.js) : ça ne touche que les
+// appareils déjà abonnés aux notifications, pas la totalité des comptes.
+async function broadcastTo(subs, payloadObj) {
+  let sent = 0, expired = 0;
+  await Promise.all(subs.map(async (sub) => {
+    const result = await sendPushNotification(sub, payloadObj);
+    if (result.ok) sent++;
+    if (result.expired) {
+      expired++;
+      db.prepare('DELETE FROM push_subscriptions WHERE id = ?').run(sub.id);
+    }
+  }));
+  return { targeted: subs.length, sent, expired };
+}
+
+function validateBroadcastBody(body) {
+  const { title, body: messageBody, url } = body || {};
+  if (!title || !String(title).trim()) return { error: 'Titre requis' };
+  if (!messageBody || !String(messageBody).trim()) return { error: 'Message requis' };
+  return { payload: { title: String(title).trim(), body: String(messageBody).trim(), url: url || '/' } };
+}
+
+// "Joueur" = tout abonnement 'user' dont le user_id n'est PAS lié à une ligne agents —
+// même distinction que listPlayers() dans routes/account.js (un agent est aussi une
+// ligne "users", donc il faut explicitement l'exclure pour ne viser que les joueurs).
+export async function broadcastToPlayers(body) {
+  const { error, payload } = validateBroadcastBody(body);
+  if (error) return { status: 400, data: { error } };
+
+  const subs = db.prepare(
+    `SELECT * FROM push_subscriptions WHERE subject_type = 'user' AND user_id NOT IN (SELECT user_id FROM agents)`
+  ).all();
+  const result = await broadcastTo(subs, payload);
+  return {
+    status: 200,
+    data: { message: `Annonce envoyée à ${result.sent} appareil(s) sur ${result.targeted} joueur(s) abonné(s) aux notifications.`, ...result }
+  };
+}
+
+export async function broadcastToAgents(body) {
+  const { error, payload } = validateBroadcastBody(body);
+  if (error) return { status: 400, data: { error } };
+
+  const subs = db.prepare(
+    `SELECT * FROM push_subscriptions WHERE subject_type = 'user' AND user_id IN (SELECT user_id FROM agents)`
+  ).all();
+  const result = await broadcastTo(subs, payload);
+  return {
+    status: 200,
+    data: { message: `Annonce envoyée à ${result.sent} appareil(s) sur ${result.targeted} agent(s) abonné(s) aux notifications.`, ...result }
+  };
+}

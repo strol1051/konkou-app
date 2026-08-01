@@ -327,6 +327,8 @@ const state = {
   playersMatching: 0, // nombre de comptes correspondant à la recherche actuelle (= playersTotal sans recherche)
   playersTruncated: false, // vrai si plus de résultats existent que ceux renvoyés (voir PLAYERS_LIST_LIMIT côté serveur)
   playersSearch: '', // terme de recherche actuel (nom ou téléphone) pour l'onglet "Joueurs"
+  broadcastTarget: 'players', // 'players' | 'agents' — cible actuelle du formulaire "Envoyer une annonce" (Réglages)
+  broadcastResult: null, // dernier résultat de /admin/broadcast/... ({ targeted, sent, expired, target }), null tant que rien n'a été envoyé
   accountLookup: null,
   contactWhatsapp: null, // numéro configuré pour "Nous contacter" (null tant que non défini)
   currentTheme: 'default', // thème saisonnier actif (voir THEMES plus haut)
@@ -854,6 +856,40 @@ function accountLookupResultHtml(result) {
 // backend/routes/contact.js et app.js). Stocké en base (table settings), donc
 // modifiable ici sans redéploiement — contrairement à OPERATOR_WHATSAPP_NUMBER qui
 // reste une variable d'environnement pour la confirmation d'inscription/reset.
+// ---------- Diffusion groupée (juillet 2026) ----------
+// Envoie une notification push identique à tous les joueurs OU tous les agents abonnés
+// (jamais les deux à la fois — deux publics différents, deux boutons de cible séparés,
+// voir backend/routes/push.js broadcastToPlayers/broadcastToAgents). Ce n'est PAS un vrai
+// envoi WhatsApp de masse (techniquement impossible sans intégrer l'API WhatsApp Business
+// — voir la discussion avec l'utilisateur) : seuls les appareils déjà abonnés aux
+// notifications reçoivent l'annonce, d'où l'avertissement explicite ci-dessous et le
+// décompte réel affiché après l'envoi plutôt qu'un message vague de succès.
+function renderBroadcastSection() {
+  const target = state.broadcastTarget || 'players';
+  const result = state.broadcastResult;
+  return `
+    <div class="card">
+      <h2>📢 Envoyer une annonce</h2>
+      <p style="font-size:13px;">Envoie une notification push identique à tous les joueurs ou tous les agents. <strong>Ce n'est pas un envoi WhatsApp</strong> — ça ne touche que les appareils ayant déjà activé les notifications sur cet appareil (bouton "🔔 Activer les notifications" côté joueur/agent), pas la totalité des comptes inscrits.</p>
+      <div class="grid-2" style="margin-bottom:12px;">
+        <button class="tile" data-broadcast-target="players" style="${target === 'players' ? 'outline:2px solid var(--green);' : ''}">👥 Tous les joueurs</button>
+        <button class="tile" data-broadcast-target="agents" style="${target === 'agents' ? 'outline:2px solid var(--green);' : ''}">🧑‍💼 Tous les agents</button>
+      </div>
+      <form id="broadcast-form">
+        <input name="title" placeholder="Titre de la notification" maxlength="80" required />
+        <textarea name="body" placeholder="Message" maxlength="300" rows="3" required></textarea>
+        <button class="primary" type="submit">📢 Envoyer aux ${target === 'players' ? 'joueurs' : 'agents'} abonnés</button>
+      </form>
+      ${result ? `
+        <p style="font-size:13px; margin-top:10px;">
+          Envoyé à <strong>${result.sent}</strong> appareil(s) sur <strong>${result.targeted}</strong> ${result.target === 'players' ? 'joueur(s)' : 'agent(s)'} abonné(s) aux notifications.
+          ${result.expired > 0 ? ` (${result.expired} abonnement(s) expiré(s) nettoyé(s) au passage.)` : ''}
+        </p>
+      ` : ''}
+    </div>
+  `;
+}
+
 function renderSettingsSection() {
   const current = state.contactWhatsapp;
   return `
@@ -873,6 +909,7 @@ function renderSettingsSection() {
       <p style="font-size:13px;">Activez les notifications push sur CET appareil/navigateur pour être prévenu·e directement, même l'admin fermé, dès qu'une nouvelle inscription ou une demande de réinitialisation de mot de passe attend une confirmation dans "Vérifications". Nécessite les clés VAPID configurées côté serveur (voir README.md, section "Notifications push") — sans elles, le bouton ci-dessous affichera une erreur explicite.</p>
       ${notificationsToggleHtml(state.pushSubscribed, "Vous recevrez un signal sur cet appareil dès qu'une action attend votre confirmation — même la fenêtre admin fermée.")}
     </div>
+    ${renderBroadcastSection()}
     <div class="card">
       <h2>🎨 Thème de l'app</h2>
       <p style="font-size:13px;">Change les couleurs et ajoute un décor animé sur toute l'app (joueur et admin). S'applique immédiatement pour tout le monde au prochain chargement de la page.</p>
@@ -1314,6 +1351,32 @@ function bind() {
         setState({ success: data.message, error: '', contactWhatsapp: data.whatsappNumber });
       } catch (err) {
         setState({ error: err.message });
+      }
+    });
+  }
+  document.querySelectorAll('[data-broadcast-target]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      setState({ broadcastTarget: btn.dataset.broadcastTarget, broadcastResult: null });
+    });
+  });
+  const broadcastForm = document.getElementById('broadcast-form');
+  if (broadcastForm) {
+    broadcastForm.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const fd = new FormData(e.target);
+      const title = fd.get('title');
+      const messageBody = fd.get('body');
+      const target = state.broadcastTarget;
+      const label = target === 'players' ? 'tous les joueurs' : 'tous les agents';
+      if (!confirm(`Envoyer cette annonce à ${label} abonnés aux notifications ? Cette action ne peut pas être annulée.`)) return;
+      setState({ loading: true, error: '' });
+      try {
+        const data = await api(`/admin/broadcast/${target}`, { method: 'POST', body: { title, body: messageBody } });
+        setState({ success: data.message, error: '', loading: false, broadcastResult: { targeted: data.targeted, sent: data.sent, expired: data.expired, target } });
+        e.target.reset();
+      } catch (err) {
+        if (err.status === 401) { logout(); return; }
+        setState({ error: err.message, loading: false });
       }
     });
   }

@@ -677,6 +677,14 @@ Corrigé en appliquant le même principe : quand `withdrawablePoints < minCashou
 
 Testé (script Node jetable, base de test jetable) : `listActiveAgents()` renvoie bien le téléphone d'un agent actif, n'inclut jamais un agent en attente ou rejeté, et les autres champs (ville, prénom) restent corrects.
 
+**Diffusion groupée aux joueurs/agents (juillet 2026).** Nouveau bouton "📢 Envoyer une annonce" dans `/admin.html` (Réglages), pour prévenir tous les joueurs ou tous les agents à la fois — demandé initialement comme "envoi WhatsApp de masse", techniquement impossible avec l'intégration WhatsApp actuelle de l'app (des liens `wa.me` que la personne doit envoyer elle-même, un par un — rien à automatiser en masse sans risquer un bannissement du numéro, et une vraie API WhatsApp Business coûte par message et exige des modèles pré-approuvés par Meta). À la place, la diffusion réutilise le système de notifications push déjà en place — gratuit, déjà construit, sans nouvelle intégration.
+
+- **`backend/routes/push.js`** : deux nouveaux handlers `broadcastToPlayers(body)`/`broadcastToAgents(body)` (`{title, body, url}`) — contrairement à `notifyAdmins`/`notifyUser` (effets de bord silencieux d'une autre action), ce sont de vrais handlers de route avec validation et renvoient un décompte réel (`targeted`/`sent`/`expired`), pour que l'admin sache combien d'appareils ont réellement reçu l'annonce plutôt que de croire à tort que "tous les comptes" l'ont reçue — seuls les appareils déjà abonnés aux notifications sont touchés. La distinction joueur/agent réutilise le même principe que `listPlayers()` (`routes/account.js`) : un agent étant aussi une ligne `users`, il faut l'exclure explicitement de la cible "joueurs" via une sous-requête sur `agents.user_id`.
+- **`backend/server.js`** : nouvelles routes `POST /api/admin/broadcast/players` et `POST /api/admin/broadcast/agents`, protégées par jeton admin.
+- **`frontend/admin.js`** : nouvelle carte dans Réglages avec un sélecteur de cible (joueurs/agents), titre + message, confirmation avant envoi (irréversible), et affichage du décompte réel après envoi.
+
+Testé (script Node jetable, base de test jetable, `fetch` mocké) : une annonce "joueurs" atteint exactement les joueurs abonnés (jamais un agent ni un admin), une annonce "agents" atteint exactement les agents abonnés (jamais un joueur), titre ou message manquant rejeté (400).
+
 ## Structure du projet
 
 ```
