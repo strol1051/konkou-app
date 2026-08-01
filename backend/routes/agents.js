@@ -407,11 +407,18 @@ export function getAgentCommissionByDay(userId, dateFilter) {
 // Powers the agent picker shown to players on the deposit/cashout forms, so they choose
 // from a list instead of typing a code blind. City/address are included so the player
 // knows where they're going before committing to that agent — not their credit balance
-// or commission (business-sensitive, stays out of this response).
+// or commission (business-sensitive, stays out of this response). `phone` (juillet 2026)
+// powers the "💬 Contacter l'agent" button shown alongside city/address once a player
+// picks an agent (voir agentSelectHtml/bindAgentSelectInfo dans frontend/app.js) — unlike
+// credit_balance/commission, an agent's phone number is already effectively public in
+// practice (players deal with them in person for every deposit/retrait/VIP), so exposing
+// it here isn't a new sensitivity concern.
 export function listActiveAgents() {
-  const rows = db.prepare(
-    `SELECT id, agent_code, first_name, last_name, city, address FROM agents WHERE status = 'active' ORDER BY agent_code ASC`
-  ).all();
+  const rows = db.prepare(`
+    SELECT a.id, a.agent_code, a.first_name, a.last_name, a.city, a.address, u.phone
+    FROM agents a JOIN users u ON u.id = a.user_id
+    WHERE a.status = 'active' ORDER BY a.agent_code ASC
+  `).all();
   return {
     status: 200,
     data: {
@@ -422,7 +429,8 @@ export function listActiveAgents() {
         firstName: a.first_name,
         lastName: a.last_name,
         city: a.city,
-        address: a.address
+        address: a.address,
+        phone: a.phone
       }))
     }
   };

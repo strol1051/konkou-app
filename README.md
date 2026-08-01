@@ -670,6 +670,13 @@ Cause : `<input type="number" min="${minCashoutPoints}" max="${data.withdrawable
 
 Corrigé en appliquant le même principe : quand `withdrawablePoints < minCashoutPoints`, le formulaire est remplacé par un message explicite ("Vous n'avez pas assez de points retirables... minimum X pts, vous avez Y pts retirables") au lieu de rendre un `<input>` avec une plage invalide. Les formulaires de dépôt (bornes fixes `MIN_DEPOSIT_HTG`/`MAX_DEPOSIT_HTG`) et de renflouement agent (plafond qui ne peut réalistement pas descendre sous le minimum) ne sont pas concernés par ce même bug.
 
+**Bouton "Contacter cet agent" (juillet 2026).** Un joueur qui choisit un agent sur le formulaire de dépôt, retrait ou VIP peut désormais le contacter directement par WhatsApp, sans attendre de se rendre sur place.
+
+- **`backend/routes/agents.js`** : `listActiveAgents()` inclut désormais le téléphone de chaque agent actif (jointure avec `users`). Contrairement au crédit revendable ou aux commissions (qui restent hors de cette réponse, business-sensibles), le téléphone d'un agent est déjà effectivement public en pratique — les joueurs le rencontrent en personne à chaque dépôt/retrait — donc l'exposer ici n'ajoute aucun risque nouveau.
+- **`frontend/app.js`** : l'encart "📍 Infos agent" (déjà affiché sous le sélecteur d'agent dès qu'un joueur en choisit un) affiche maintenant aussi un bouton "💬 Contacter cet agent", qui ouvre WhatsApp avec un message pré-rempli — construit entièrement côté client (même principe que "Nous contacter" et la confirmation d'inscription : c'est le joueur qui envoie lui-même le message depuis sa propre app WhatsApp, rien n'est stocké ni envoyé depuis le serveur).
+
+Testé (script Node jetable, base de test jetable) : `listActiveAgents()` renvoie bien le téléphone d'un agent actif, n'inclut jamais un agent en attente ou rejeté, et les autres champs (ville, prénom) restent corrects.
+
 ## Structure du projet
 
 ```

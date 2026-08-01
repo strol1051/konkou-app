@@ -1802,14 +1802,26 @@ function agentSelectHtml(agents, selectId) {
   return `
     <select name="agentCode" id="${selectId}" required>
       <option value="">Choisir un agent</option>
-      ${agents.map(a => `<option value="${escapeHtml(a.agentCode)}" data-city="${escapeHtml(a.city || '')}" data-address="${escapeHtml(a.address || '')}">${escapeHtml(a.fullCode || a.agentCode)} — ${escapeHtml(a.firstName)} ${escapeHtml(a.lastName)} — ${escapeHtml([a.city, a.address].filter(Boolean).join(', '))}</option>`).join('')}
+      ${agents.map(a => `<option value="${escapeHtml(a.agentCode)}" data-city="${escapeHtml(a.city || '')}" data-address="${escapeHtml(a.address || '')}" data-phone="${escapeHtml(a.phone || '')}" data-first-name="${escapeHtml(a.firstName || '')}">${escapeHtml(a.fullCode || a.agentCode)} — ${escapeHtml(a.firstName)} ${escapeHtml(a.lastName)} — ${escapeHtml([a.city, a.address].filter(Boolean).join(', '))}</option>`).join('')}
     </select>
     <div id="${selectId}-info" class="card" style="display:none; padding:12px; margin-top:-2px;"></div>
   `;
 }
 
-// Met à jour l'encart "📍 Infos agent" (ville/adresse) sous le sélecteur dès que le
-// joueur choisit un agent — pour qu'il sache où se rendre avant de valider sa demande.
+// Lien wa.me pré-rempli vers l'agent choisi — même principe que le formulaire "Nous
+// contacter" (voir routes/contact.js) et la confirmation d'inscription (otp.js) : construit
+// entièrement côté client (le téléphone de l'agent est déjà dans les données du
+// sélecteur, pas besoin d'aller-retour serveur), c'est le joueur qui envoie lui-même le
+// message depuis sa propre app WhatsApp.
+function agentContactWhatsappLink(phone, agentFirstName) {
+  const playerName = state.user?.name || 'un joueur Konkou';
+  const text = `Bonjour${agentFirstName ? ` ${agentFirstName}` : ''}, je suis ${playerName} sur Konkou. J'ai une question à propos d'une demande chez vous.`;
+  return `https://wa.me/${phone}?text=${encodeURIComponent(text)}`;
+}
+
+// Met à jour l'encart "📍 Infos agent" (ville/adresse + bouton de contact) sous le
+// sélecteur dès que le joueur choisit un agent — pour qu'il sache où se rendre, et
+// puisse déjà le joindre en cas de question, avant même de valider sa demande.
 function bindAgentSelectInfo(selectId) {
   const select = document.getElementById(selectId);
   const info = document.getElementById(`${selectId}-info`);
@@ -1818,9 +1830,17 @@ function bindAgentSelectInfo(selectId) {
     const opt = select.selectedOptions[0];
     const city = opt?.dataset.city;
     const address = opt?.dataset.address;
-    if (opt && opt.value && (city || address)) {
+    const phone = opt?.dataset.phone;
+    const firstName = opt?.dataset.firstName;
+    if (opt && opt.value && (city || address || phone)) {
       info.style.display = 'block';
-      info.innerHTML = `<strong>📍 Infos agent</strong><p style="margin:6px 0 0;">${[city, address].filter(Boolean).map(escapeHtml).join(' — ')}</p>`;
+      info.innerHTML = `
+        <strong>📍 Infos agent</strong>
+        ${(city || address) ? `<p style="margin:6px 0 0;">${[city, address].filter(Boolean).map(escapeHtml).join(' — ')}</p>` : ''}
+        ${phone ? `
+          <a href="${agentContactWhatsappLink(phone, firstName)}" target="_blank" rel="noopener" class="primary" style="display:block; text-align:center; text-decoration:none; background:#25D366; margin-top:10px;">💬 Contacter cet agent</a>
+        ` : ''}
+      `;
     } else {
       info.style.display = 'none';
       info.innerHTML = '';
