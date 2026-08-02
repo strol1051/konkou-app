@@ -119,8 +119,9 @@ export async function register(body) {
   notifyAdminsSilently({ title: 'Konkou — Nouvelle inscription', body: `${name} (${phone}) attend une confirmation.`, url: '/admin.html' });
 
   // No auth token yet — the account exists but isn't usable until an admin confirms the
-  // WhatsApp message. `code` is not meant to be typed by the user; the frontend keeps it
-  // to poll /auth/verify-status once the confirmation happens.
+  // request via the in-app chat (voir routes/chat.js, juillet 2026 — remplace la
+  // confirmation par WhatsApp). `code` sert de secret pour ce tchat ET pour
+  // /auth/verify-status ; le frontend le garde pour les deux usages.
   return {
     status: 200,
     data: {
@@ -129,15 +130,9 @@ export async function register(body) {
       purpose: 'verify_phone',
       code: otp.code,
       whatsappLink: otp.whatsappLink,
-      message: whatsappMessage(otp.whatsappLink, 'Compte créé. Confirmez via WhatsApp pour l’activer.', 'Compte créé')
+      message: 'Compte créé — confirmez votre identité via la conversation intégrée pour l’activer.'
     }
   };
-}
-
-function whatsappMessage(whatsappLink, successText, missingConfigText) {
-  return whatsappLink
-    ? successText
-    : `${missingConfigText} — aucun numéro WhatsApp n'est configuré côté serveur (OPERATOR_WHATSAPP_NUMBER), contactez l'administrateur.`;
 }
 
 export function login(body) {
@@ -213,7 +208,7 @@ export async function forgotPassword(body) {
   return {
     status: 200,
     data: {
-      message: whatsappMessage(otp.whatsappLink, 'Confirmez via WhatsApp pour qu’un administrateur autorise votre demande.', 'Demande enregistrée'),
+      message: 'Demande enregistrée — confirmez votre identité via la conversation intégrée pour qu’un administrateur autorise votre demande.',
       phone,
       purpose: 'reset_password',
       code: otp.code,

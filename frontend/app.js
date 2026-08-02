@@ -524,7 +524,18 @@ const state = {
   // à chaque rechargement complet de la page (valeur initiale de state, jamais persistée en
   // storage) — c'est ce qui fait que le rappel est "répété" d'une visite à l'autre tant que
   // l'abonnement n'est pas fait, sans jamais être insistant au sein d'une même visite.
-  pushReminderDismissed: false
+  pushReminderDismissed: false,
+  // Tchat "Nous contacter" (juillet 2026, voir routes/chat.js) — null tant qu'aucune
+  // conversation anonyme n'a encore été démarrée (avant connexion). { phone, secret,
+  // messages } une fois le premier message envoyé. Sans objet pour un utilisateur déjà
+  // connecté (state.token) : dans ce cas /api/chat/... identifie la conversation via le
+  // jeton de session, pas via ce state — voir renderContactForm()/loadContactMessages().
+  contactChat: null,
+  // Numéro affiché en complément du tchat sur l'écran "Nous contacter" (voir
+  // contactRoutes.getPublicContactNumber) — "garder un numéro de contact sur le site" même
+  // si les conversations elles-mêmes passent désormais par le tchat. null tant que non
+  // chargé ou non configuré par l'admin.
+  contactPhoneNumber: null
 };
 
 function setState(patch) {
@@ -555,6 +566,7 @@ function startPolling() {
       const data = await res.json();
       if (data.status === 'confirmed') {
         stopPolling();
+        stopChatPolling();
         if (purpose === 'reset_password') {
           // Pas de token à ce stade — un admin vient seulement d'AUTORISER la demande
           // (voir confirmPasswordReset dans routes/admin.js), le mot de passe n'a pas
@@ -574,6 +586,72 @@ function startPolling() {
       // network hiccup — just try again on the next tick
     }
   }, 3000);
+}
+
+// ---------- TCHAT INTERNE (juillet 2026, voir routes/chat.js) ----------
+// Remplace la confirmation par WhatsApp (écran "Confirmez votre inscription/la
+// réinitialisation") après le blocage du numéro opérateur — voir renderAwaitingConfirm()
+// plus bas. Sondage séparé du pollTimer ci-dessus (qui, lui, ne fait que détecter
+// 'confirmed'/'expired'/'invalid' pour changer d'écran) : celui-ci récupère les NOUVEAUX
+// messages et les ajoute directement au DOM sans passer par setState()/render(), pour ne
+// jamais effacer un brouillon en cours de frappe dans le champ de message (même principe
+// déjà appliqué au commentaire "pending -> keep waiting" juste au-dessus).
+let chatPollTimer = null;
+let chatLastMessageId = 0;
+let chatTick = null;
+
+function stopChatPolling() {
+  if (chatPollTimer) { clearInterval(chatPollTimer); chatPollTimer = null; }
+  chatTick = null;
+}
+
+// `getParams` est ré-appelée à CHAQUE tick (jamais figée une seule fois à l'appel) pour
+// toujours interroger le bon triplet même si l'utilisateur relance une demande (nouveau
+// code, voir resendCode()) pendant que le tchat est ouvert, et pour s'arrêter proprement
+// (en renvoyant null) dès que l'écran concerné n'est plus affiché.
+function startChatPolling(getParams) {
+  stopChatPolling();
+  chatLastMessageId = 0;
+  chatTick = async () => {
+    const params = getParams();
+    if (!params) return stopChatPolling();
+    try {
+      const q = new URLSearchParams({ phone: params.phone, purpose: params.purpose, secret: params.secret || '' });
+      const res = await fetch(`/api/chat/anonymous/messages?${q}`);
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) return;
+      appendNewChatMessages(data.messages || []);
+    } catch {
+      // network hiccup — on retentera au prochain tick
+    }
+  };
+  chatTick();
+  chatPollTimer = setInterval(chatTick, 3000);
+}
+
+// Ajoute directement les nouveaux messages (ceux dont l'id dépasse le dernier connu) au
+// conteneur #chat-thread affiché à l'écran, sans jamais passer par render() — voir la note
+// sur chatPollTimer ci-dessus.
+function appendNewChatMessages(messages) {
+  const container = document.getElementById('chat-thread');
+  if (!container) return;
+  const fresh = messages.filter(m => m.id > chatLastMessageId);
+  if (fresh.length === 0) return;
+  const empty = container.querySelector('.chat-empty');
+  if (empty) empty.remove();
+  fresh.forEach(m => {
+    chatLastMessageId = Math.max(chatLastMessageId, m.id);
+    container.insertAdjacentHTML('beforeend', chatBubbleHtml(m));
+  });
+  container.scrollTop = container.scrollHeight;
+}
+
+function chatBubbleHtml(m) {
+  const isAdmin = m.sender === 'admin';
+  return `<div class="chat-msg ${isAdmin ? 'chat-msg-admin' : 'chat-msg-user'}">
+    <span class="chat-msg-author">${isAdmin ? 'Konkou' : 'Vous'}</span>
+    <p>${escapeHtml(m.body)}</p>
+  </div>`;
 }
 
 async function api(path, { method = 'GET', body } = {}) {
@@ -783,7 +861,7 @@ function renderLoginRegister() {
       <p style="font-size:12px; color:var(--muted); margin:8px 0 0;">Vous voulez revendre des parties bonus et payer les retraits des joueurs en échange d'une commission ? Inscrivez-vous comme agent — un compte totalement séparé d'un compte joueur.</p>
     </div>
     <p style="text-align:center; color:var(--muted); font-size:12px;">
-      En vous inscrivant vous recevez 100 points de bienvenue. La confirmation se fait par WhatsApp.
+      En vous inscrivant vous recevez 100 points de bienvenue. La confirmation se fait via une conversation intégrée à l'application.
     </p>
     <button class="link-btn" id="contact-link" style="display:block; margin:6px auto 0; text-align:center;">📞 Nous contacter</button>
   `;
@@ -823,39 +901,135 @@ function renderAgentRegisterForm() {
 }
 
 // Formulaire "Nous contacter" — accessible avant connexion (partenaires, prospects sans
-// compte) et depuis le Profil une fois connecté (voir bindProfileEvents). N'envoie rien
-// depuis le serveur : construit un lien wa.me pré-rempli vers le numéro que l'admin a
-// configuré (voir /admin.html), sur le même principe que la confirmation WhatsApp de
-// l'inscription — c'est l'utilisateur qui appuie sur "Envoyer" dans sa propre app WhatsApp.
+// compte) et depuis le Profil/Espace Agent une fois connecté (voir bindProfileEvents et
+// bindAgentShellEvents). Depuis juillet 2026 (blocage du numéro WhatsApp opérateur), ceci
+// utilise le tchat interne (voir routes/chat.js) plutôt qu'un lien wa.me automatique : la
+// conversation reste consultable ici même, avec un vrai aller-retour avec un admin. Un
+// numéro reste néanmoins affiché en complément (state.contactPhoneNumber, voir
+// loadContactNumber()) pour qui préfère écrire directement — "garder un numéro de contact
+// sur le site" sans dépendre de ce canal pour la conversation elle-même.
 function renderContactForm() {
+  const isAuthed = !!state.token;
+  const chat = state.contactChat;
+  const started = isAuthed || !!chat;
   return `
     <div class="card">
       <h2>📞 Nous contacter</h2>
-      <p>Question, partenariat, problème avec l'app ? Écrivez-nous — votre message s'ouvrira dans WhatsApp, prêt à envoyer.</p>
-      <form id="contact-form">
-        <input name="fullName" placeholder="Nom et prénom" required />
-        <input name="whatsapp" placeholder="Votre numéro WhatsApp (ex: 50937123456)" required />
-        <textarea name="message" placeholder="Votre message (500 caractères max)" maxlength="500" rows="5" required></textarea>
-        <button class="primary" type="submit">Envoyer</button>
-      </form>
+      ${!started ? `
+        <p>Question, partenariat, problème avec l'app ? Écrivez-nous ci-dessous — un administrateur vous répond ici même.</p>
+        <form id="contact-start-form">
+          <input name="fullName" placeholder="Nom et prénom" required />
+          <input name="whatsapp" placeholder="Votre numéro (ex: 50937123456)" required />
+          <textarea name="message" placeholder="Votre message (500 caractères max)" maxlength="500" rows="4" required></textarea>
+          <button class="primary" type="submit">Envoyer</button>
+        </form>
+      ` : `
+        <p style="font-size:13px;">Un administrateur vous répond ici même.</p>
+        <div class="chat-thread">
+          ${(chat?.messages || []).length === 0 ? `<p class="chat-empty">Aucun message pour l'instant.</p>` : (chat.messages || []).map(chatBubbleHtml).join('')}
+        </div>
+        <button class="link-btn" type="button" id="contact-refresh-btn" style="margin-bottom:10px;">🔄 Actualiser</button>
+        <form id="chat-send-form" class="chat-send-form">
+          <textarea name="body" placeholder="Votre message..." maxlength="1000" rows="2" required></textarea>
+          <button class="primary" type="submit">Envoyer</button>
+        </form>
+      `}
+      ${state.contactPhoneNumber ? `<p style="font-size:12px; color:var(--muted); margin-top:14px;">Vous pouvez aussi nous joindre directement au <strong>+${escapeHtml(state.contactPhoneNumber)}</strong>.</p>` : ''}
       <button class="link-btn" id="contact-back" style="margin-top:14px;">Retour</button>
     </div>
   `;
 }
 
+async function loadContactNumber() {
+  try {
+    const res = await fetch('/api/contact/number');
+    const data = await res.json();
+    if (data.whatsappNumber) setState({ contactPhoneNumber: data.whatsappNumber });
+  } catch {
+    // pas grave — le numéro est un complément, pas requis pour utiliser le tchat
+  }
+}
+
+// Recharge les messages de la conversation active — authentifiée (jeton de session, voir
+// /api/chat/messages) ou anonyme (phone+secret conservés dans state.contactChat, voir
+// /api/chat/anonymous/messages). Contrairement au tchat de confirmation
+// (renderAwaitingConfirm), pas de sondage automatique ici : le bouton "🔄 Actualiser"
+// suffit pour un formulaire de contact, moins urgent qu'une confirmation d'inscription.
+async function loadContactMessages() {
+  try {
+    let messages;
+    if (state.token) {
+      const data = await api('/chat/messages');
+      messages = data.messages;
+    } else if (state.contactChat) {
+      const q = new URLSearchParams({ phone: state.contactChat.phone, purpose: 'support', secret: state.contactChat.secret });
+      const res = await fetch(`/api/chat/anonymous/messages?${q}`);
+      const data = await res.json().catch(() => ({}));
+      messages = data.messages || [];
+    } else {
+      return;
+    }
+    setState({ contactChat: { ...(state.contactChat || {}), messages } });
+  } catch (err) {
+    setState({ error: err.message });
+  }
+}
+
 function bindContactEvents(onBack) {
   document.getElementById('contact-back').addEventListener('click', onBack);
-  document.getElementById('contact-form').addEventListener('submit', async (e) => {
-    e.preventDefault();
-    const fd = Object.fromEntries(new FormData(e.target).entries());
-    try {
-      const data = await api('/contact', { method: 'POST', body: fd });
-      window.open(data.whatsappLink, '_blank');
-      setState({ error: '', success: 'Message prêt — envoyez-le depuis WhatsApp pour le finaliser.' });
-    } catch (err) {
-      setState({ error: err.message, success: '' });
-    }
-  });
+
+  if (!state.contactPhoneNumber) loadContactNumber();
+
+  const startForm = document.getElementById('contact-start-form');
+  if (startForm) {
+    startForm.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const fd = Object.fromEntries(new FormData(e.target).entries());
+      try {
+        const res = await fetch('/api/chat/anonymous/send', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ phone: fd.whatsapp, purpose: 'support', body: fd.message, displayName: fd.fullName })
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(data.error || 'Erreur inconnue');
+        setState({
+          contactChat: { phone: fd.whatsapp, secret: data.secret, messages: [{ id: 0, sender: 'user', body: fd.message }] },
+          error: '', success: ''
+        });
+      } catch (err) {
+        setState({ error: err.message });
+      }
+    });
+  }
+
+  const refreshBtn = document.getElementById('contact-refresh-btn');
+  if (refreshBtn) refreshBtn.addEventListener('click', loadContactMessages);
+
+  const sendForm = document.getElementById('chat-send-form');
+  if (sendForm) {
+    sendForm.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const text = new FormData(e.target).get('body');
+      try {
+        if (state.token) {
+          await api('/chat/send', { method: 'POST', body: { body: text } });
+        } else {
+          const res = await fetch('/api/chat/anonymous/send', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ phone: state.contactChat.phone, purpose: 'support', secret: state.contactChat.secret, body: text })
+          });
+          const data = await res.json().catch(() => ({}));
+          if (!res.ok) throw new Error(data.error || 'Erreur inconnue');
+        }
+        e.target.reset();
+        await loadContactMessages();
+      } catch (err) {
+        setState({ error: err.message });
+      }
+    });
+  }
 }
 
 // Depuis la refonte de juillet 2026, cette demande ne contient plus de nouveau mot de
@@ -878,7 +1052,7 @@ function renderForgotRequest() {
   return `
     <div class="card">
       <h2>Mot de passe oublié</h2>
-      <p>Entrez votre numéro. Un administrateur autorisera votre demande via WhatsApp, puis vous pourrez choisir votre nouveau mot de passe directement dans l'application.</p>
+      <p>Entrez votre numéro. Un administrateur autorisera votre demande via une conversation intégrée à l'application, puis vous pourrez choisir votre nouveau mot de passe directement ici.</p>
       <form id="forgot-request-form">
         ${phoneField('phone')}
         <button class="primary" type="submit">Continuer</button>
@@ -938,18 +1112,18 @@ function renderAwaitingConfirm() {
     <div class="card">
       <h2>${title}</h2>
       <p>Numéro : <strong>${escapeHtml(a.phone || '')}</strong></p>
-      ${a.whatsappLink ? `
-        <a class="primary" style="display:block; text-align:center; text-decoration:none; background:#25D366; margin-bottom:10px;" href="${a.whatsappLink}" target="_blank" rel="noopener">
-          💬 Confirmer via WhatsApp
-        </a>
-        <p style="font-size:13px;">Un message pré-rempli s'ouvrira dans WhatsApp — envoyez-le tel quel. ${isReset
-          ? "Dès qu'un administrateur aura autorisé votre demande, vous pourrez choisir votre nouveau mot de passe ici même."
-          : 'Votre compte sera activé automatiquement dès qu\'un agent l\'aura confirmé.'}</p>
-        <p class="center-msg" style="padding:14px 0;">⏳ En attente de confirmation…</p>
-      ` : `
-        <div class="error-banner">Aucun numéro WhatsApp n'est configuré côté serveur pour le moment — contactez l'administrateur pour ${isReset ? 'autoriser votre réinitialisation' : 'activer votre compte'} manuellement.</div>
-      `}
-      <button class="link-btn" id="resend-link">Je n'ai pas pu envoyer le message — relancer</button>
+      <p style="font-size:13px;">Votre code de confirmation :</p>
+      <p style="font-size:28px; font-weight:800; letter-spacing:4px; text-align:center;">${escapeHtml(a.code || '')}</p>
+      <p style="font-size:13px;">Indiquez ce code à l'administrateur dans la conversation ci-dessous pour confirmer votre identité — ${isReset
+        ? "vous pourrez ensuite choisir votre nouveau mot de passe directement dans l'application."
+        : 'votre compte sera activé automatiquement dès la confirmation.'}</p>
+      <div id="chat-thread" class="chat-thread"><p class="chat-empty">Écrivez votre code ci-dessous pour commencer.</p></div>
+      <form id="chat-send-form" class="chat-send-form">
+        <textarea name="body" placeholder="Ex : Bonjour, mon code est ${escapeHtml(a.code || '123456')}" maxlength="1000" rows="2" required></textarea>
+        <button class="primary" type="submit">Envoyer</button>
+      </form>
+      <p class="center-msg" style="padding:14px 0;">⏳ En attente de confirmation…</p>
+      <button class="link-btn" id="resend-link">Je n'ai pas reçu de réponse — relancer une demande</button>
       <button class="link-btn" id="back-to-login" style="margin-top:10px; display:block;">Retour à la connexion</button>
     </div>
   `;
@@ -975,6 +1149,10 @@ function bindAuthEvents() {
   }
   document.getElementById('contact-link').addEventListener('click', () => {
     setState({ authMode: 'contact', error: '', success: '' });
+    // Reprend une conversation déjà démarrée plus tôt dans cette même visite (voir
+    // state.contactChat) — sans effet si aucune conversation n'a encore été ouverte, le
+    // formulaire de démarrage s'affiche alors normalement (voir renderContactForm()).
+    if (state.contactChat) loadContactMessages();
   });
   document.getElementById('agent-register-link').addEventListener('click', () => {
     setState({ authMode: 'agent-register', error: '', success: '' });
@@ -1012,9 +1190,17 @@ function goAwaitingConfirm(data) {
     awaiting: { phone: data.phone, purpose: data.purpose, code: data.code, whatsappLink: data.whatsappLink },
     awaitingStatus: null,
     error: '',
-    success: data.message
+    success: ''
   });
   startPolling();
+  // Le code (state.awaiting.code) sert AUSSI de secret pour le tchat — voir
+  // checkAnonymousAccess() dans routes/chat.js : même triplet (phone, purpose, code) déjà
+  // utilisé par /auth/verify-status, aucun secret séparé à transporter.
+  startChatPolling(() => {
+    if (state.authMode !== 'awaiting-confirm' || !state.awaiting) return null;
+    if (state.awaitingStatus === 'expired' || state.awaitingStatus === 'invalid') return null;
+    return { phone: state.awaiting.phone, purpose: state.awaiting.purpose, secret: state.awaiting.code };
+  });
 }
 
 async function resendCode(purpose, phone) {
@@ -1033,8 +1219,36 @@ function bindAwaitingConfirmEvents() {
   });
   document.getElementById('back-to-login').addEventListener('click', () => {
     stopPolling();
+    stopChatPolling();
     setState({ authMode: 'login', awaiting: null, awaitingStatus: null, error: '', success: '' });
   });
+
+  const sendForm = document.getElementById('chat-send-form');
+  if (sendForm) {
+    sendForm.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const text = new FormData(e.target).get('body');
+      const a = state.awaiting || {};
+      try {
+        const res = await fetch('/api/chat/anonymous/send', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ phone: a.phone, purpose: a.purpose, secret: a.code, body: text })
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(data.error || 'Erreur inconnue');
+        e.target.reset();
+        // Redéclenche immédiatement un sondage plutôt que d'afficher le message envoyé de
+        // façon optimiste (avec un id inventé) — évite tout risque de doublon quand le
+        // vrai message arrive au tick suivant (voir appendNewChatMessages()), pour un coût
+        // quasi nul puisque le serveur a déjà bien enregistré le message au moment où
+        // cette réponse revient.
+        if (chatTick) chatTick();
+      } catch (err) {
+        setState({ error: err.message });
+      }
+    });
+  }
 }
 
 function bindForgotRequestEvents() {
@@ -2267,7 +2481,10 @@ let confirmingDeleteAccount = false;
 function bindProfileEvents() {
   bindAppNotificationsToggleEvents();
   const contactBtn = document.getElementById('contact-btn');
-  if (contactBtn) contactBtn.addEventListener('click', () => setState({ view: 'contact', error: '', success: '' }));
+  if (contactBtn) contactBtn.addEventListener('click', () => {
+    setState({ view: 'contact', error: '', success: '' });
+    loadContactMessages();
+  });
   const btn = document.getElementById('logout-btn');
   if (btn) btn.addEventListener('click', logout);
 
@@ -2348,7 +2565,9 @@ function renderAgentShell() {
 function bindAgentShellEvents() {
   document.getElementById('agent-logout-btn').addEventListener('click', logout);
   document.getElementById('agent-contact-btn').addEventListener('click', () => {
-    setState({ agentScreen: state.agentScreen === 'contact' ? 'main' : 'contact', error: '', success: '' });
+    const opening = state.agentScreen !== 'contact';
+    setState({ agentScreen: opening ? 'contact' : 'main', error: '', success: '' });
+    if (opening) loadContactMessages();
   });
 
   const content = document.getElementById('agent-shell-content');

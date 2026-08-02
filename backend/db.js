@@ -307,6 +307,34 @@ CREATE TABLE IF NOT EXISTS user_seen_items (
   last_seen_at TEXT DEFAULT (datetime('now')),
   UNIQUE(user_id, kind, item_key)
 );
+
+-- Tchat interne Admin <-> joueur/agent (juillet 2026) — remplace le mécanisme de
+-- confirmation par WhatsApp après le blocage du numéro opérateur (trop de messages
+-- automatiques envoyés par des inconnus à un même numéro = signal de spam pour WhatsApp,
+-- voir routes/chat.js). Trois usages regroupés ici, distingués par "purpose" :
+-- 'verify_phone'/'reset_password' (remplace l'envoi du code par WhatsApp — la personne
+-- indique son code dans la conversation, l'admin compare avec ce qu'affiche déjà l'onglet
+-- Vérifications, la logique de confirmation elle-même dans routes/admin.js est INCHANGÉE)
+-- et 'support' (ex-formulaire "Nous contacter", + support en continu pour un joueur/agent
+-- déjà connecté). "secret" est le jeton qui prouve le droit de lire/écrire dans une
+-- conversation AVANT toute connexion : pour verify_phone/reset_password c'est le même code
+-- que otp_codes.code (aucun nouveau secret à gérer, voir otpRequestExists() dans otp.js) ;
+-- pour 'support' c'est un jeton aléatoire propre à la conversation, généré au tout premier
+-- message (voir sendAnonymousMessage() dans routes/chat.js). NULL pour tout message envoyé
+-- par un utilisateur déjà connecté (via /api/chat/send, authentifié par son jeton de
+-- session — pas besoin d'un secret séparé dans ce cas).
+CREATE TABLE IF NOT EXISTS chat_messages (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  purpose TEXT NOT NULL, -- 'verify_phone' | 'reset_password' | 'support'
+  phone TEXT NOT NULL,
+  secret TEXT,
+  display_name TEXT,
+  sender TEXT NOT NULL, -- 'admin' | 'user'
+  body TEXT NOT NULL,
+  read_by_admin INTEGER NOT NULL DEFAULT 0,
+  read_by_user INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT DEFAULT (datetime('now'))
+);
 `);
 
 // Lightweight migrations for databases created before these columns existed.

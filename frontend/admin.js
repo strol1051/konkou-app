@@ -1,7 +1,8 @@
 // Konkou - mini interface agent/gestionnaire : payer/rejeter les retraits, confirmer les
-// inscriptions/réinitialisations via WhatsApp, confirmer/rejeter les dépôts de parties bonus.
-// Page volontairement séparée de l'app principale (pas de lien depuis app.js) : ce n'est
-// pas un compte utilisateur, c'est un accès protégé par le mot de passe ADMIN_PASSWORD.
+// inscriptions/réinitialisations via le tchat interne, confirmer/rejeter les dépôts de
+// parties bonus. Page volontairement séparée de l'app principale (pas de lien depuis
+// app.js) : ce n'est pas un compte utilisateur, c'est un accès protégé par le mot de passe
+// ADMIN_PASSWORD.
 
 import { isPushSubscribed, notificationsToggleHtml, bindNotificationsToggleEvents } from './push-client.js';
 
@@ -11,6 +12,17 @@ function escapeHtml(value) {
   return String(value ?? '').replace(/[&<>"']/g, (c) => ({
     '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
   }[c]));
+}
+
+// Tchat interne (juillet 2026, voir routes/chat.js) — mêmes bulles que côté joueur/agent
+// (app.js), orientation inversée : le message de l'ADMIN est "le sien" ici (aligné à
+// droite), voir .chat-msg-self/.chat-msg-other dans styles.css.
+function chatBubbleHtml(m) {
+  const isAdmin = m.sender === 'admin';
+  return `<div class="chat-msg ${isAdmin ? 'chat-msg-self' : 'chat-msg-other'}">
+    <span class="chat-msg-author">${isAdmin ? 'Vous (admin)' : 'Utilisateur'}</span>
+    <p>${escapeHtml(m.body)}</p>
+  </div>`;
 }
 
 // Champ mot de passe avec bouton "œil" — voir app.js pour la même logique côté joueur.
@@ -311,6 +323,21 @@ const state = {
   verifyPurpose: 'verify_phone', // verify_phone | reset_password
   cashouts: [],
   verifications: [],
+  // Conversations du tchat interne (juillet 2026, voir routes/chat.js) associées à chaque
+  // demande de l'onglet Vérifications, indexées par numéro de téléphone — chargées en
+  // parallèle par loadVerificationChats() juste après loadVerifications(), affichées
+  // directement dans chaque carte (voir renderVerificationsSection()) pour comparer le
+  // code indiqué par la personne avec celui affiché juste au-dessus, sans changer d'onglet.
+  verificationChats: {},
+  // Onglet "Messages" (juillet 2026) — conversations purpose='support' (ex-formulaire
+  // "Nous contacter" + support en continu pour un joueur/agent connecté), distinctes des
+  // conversations verify_phone/reset_password gérées directement dans l'onglet
+  // Vérifications ci-dessus. messageThreads = liste groupée (voir listChatThreads dans
+  // routes/chat.js) ; openMessageThread = numéro de la conversation actuellement ouverte
+  // (null = liste) ; messageThreadMessages = messages de cette conversation ouverte.
+  messageThreads: [],
+  openMessageThread: null,
+  messageThreadMessages: [],
   deposits: [],
   agents: [],
   agentsView: 'list', // list | report | reimbursements — sous-onglet de la section "agents" (voir renderAgentsSection)
@@ -370,7 +397,7 @@ async function api(path, { method = 'GET', body } = {}) {
 
 function logout() {
   localStorage.removeItem('konkou_admin_token');
-  setState({ token: null, cashouts: [], verifications: [], deposits: [], agents: [], refills: [], vip: [], revenue: null, players: [], playersSearch: '', accountLookup: null, agentsReimbursements: null, agentsReimbursementsHistory: [], error: '', success: '' });
+  setState({ token: null, cashouts: [], verifications: [], verificationChats: {}, messageThreads: [], openMessageThread: null, messageThreadMessages: [], deposits: [], agents: [], refills: [], vip: [], revenue: null, players: [], playersSearch: '', accountLookup: null, agentsReimbursements: null, agentsReimbursementsHistory: [], error: '', success: '' });
 }
 
 function render() {
@@ -398,7 +425,7 @@ function renderLogin() {
 }
 
 function renderDashboard() {
-  const sections = [['cashouts', '💸 Retraits'], ['verifications', '💬 Vérifications'], ['deposits', '🎟️ Dépôts'], ['vip', '👑 VIP'], ['agents', '🧑‍💼 Agents'], ['refills', '💳 Renflouements'], ['revenue', '📊 Revenus'], ['players', '👥 Joueurs'], ['accounts', '🗑️ Comptes'], ['settings', '⚙️ Réglages']];
+  const sections = [['cashouts', '💸 Retraits'], ['verifications', '💬 Vérifications'], ['messages', '📨 Messages'], ['deposits', '🎟️ Dépôts'], ['vip', '👑 VIP'], ['agents', '🧑‍💼 Agents'], ['refills', '💳 Renflouements'], ['revenue', '📊 Revenus'], ['players', '👥 Joueurs'], ['accounts', '🗑️ Comptes'], ['settings', '⚙️ Réglages']];
   return `
     <div class="topbar">
       <img src="${logoUrl}" alt="Konkou" class="topbar-logo">
@@ -422,6 +449,7 @@ function renderSectionBody() {
   if (state.loading) return '<div class="center-msg">Chargement...</div>';
   if (state.section === 'cashouts') return renderCashoutsSection();
   if (state.section === 'verifications') return renderVerificationsSection();
+  if (state.section === 'messages') return renderMessagesSection();
   if (state.section === 'deposits') return renderDepositsSection();
   if (state.section === 'vip') return renderVipSection();
   if (state.section === 'agents') return renderAgentsSection();
@@ -474,16 +502,57 @@ function renderVerificationsSection() {
       `).join('')}
     </div>
     <p style="color:var(--muted); font-size:13px; padding:6px 4px;">
-      Cross-vérifiez le numéro et le code ci-dessous avec le message WhatsApp reçu avant de confirmer.
+      Demandez à la personne son code dans la conversation ci-dessous et comparez-le avec celui affiché avant de confirmer.
     </p>
     ${state.verifications.length === 0 ? `<div class="card"><p>Aucune demande en attente.</p></div>` : state.verifications.map(v => `
       <div class="card">
         <h2>${escapeHtml(v.phone)}</h2>
         <p style="font-size:28px; font-weight:800; letter-spacing:4px; text-align:center;">${escapeHtml(v.code)}</p>
         <p style="font-size:12px;">Demandé le ${escapeHtml(v.requestedAt)} · Expire le ${escapeHtml(v.expiresAt)}</p>
-        <input type="text" inputmode="numeric" maxlength="6" placeholder="Recopiez le code reçu sur WhatsApp" data-verify-code-input="${escapeHtml(v.phone)}" style="text-align:center; letter-spacing:2px; font-weight:700;" />
-        <button class="tile" data-confirm-verify="${escapeHtml(v.phone)}" style="background:rgba(37,211,102,0.2); width:100%; margin-bottom:8px;">💬 Confirmer (message reçu sur WhatsApp)</button>
+        <div class="chat-thread">
+          ${(state.verificationChats[v.phone] || []).length === 0 ? `<p class="chat-empty">Aucun message pour l'instant.</p>` : (state.verificationChats[v.phone] || []).map(chatBubbleHtml).join('')}
+        </div>
+        <form class="chat-send-form" data-verify-reply-form="${escapeHtml(v.phone)}">
+          <textarea placeholder="Répondre..." maxlength="1000" rows="2" required></textarea>
+          <button class="primary" type="submit">Envoyer</button>
+        </form>
+        <input type="text" inputmode="numeric" maxlength="6" placeholder="Recopiez le code indiqué par la personne" data-verify-code-input="${escapeHtml(v.phone)}" style="text-align:center; letter-spacing:2px; font-weight:700; margin-top:10px;" />
+        <button class="tile" data-confirm-verify="${escapeHtml(v.phone)}" style="background:rgba(37,211,102,0.2); width:100%; margin-bottom:8px;">✅ Confirmer</button>
         <button class="tile" data-reject-verify="${escapeHtml(v.phone)}" style="background:rgba(210,16,52,0.2); width:100%;">❌ Refuser</button>
+      </div>
+    `).join('')}
+  `;
+}
+
+// ---------- Messages ("Nous contacter" + support en continu, voir routes/chat.js) ----------
+// Distinct de l'onglet Vérifications ci-dessus : purpose='support' uniquement (formulaire
+// "Nous contacter" avant connexion, ou message d'un joueur/agent déjà connecté) — les
+// conversations verify_phone/reset_password restent gérées directement dans Vérifications,
+// à côté du code de référence, plutôt que dupliquées ici.
+function renderMessagesSection() {
+  if (state.openMessageThread) {
+    const phone = state.openMessageThread;
+    const thread = state.messageThreads.find(t => t.phone === phone);
+    return `
+      <div class="card">
+        <button class="link-btn" id="messages-back-btn" style="margin-bottom:10px;">← Retour à la liste</button>
+        <h2>${escapeHtml(thread?.display_name || phone)}</h2>
+        <p style="font-size:12px; color:var(--muted);">${escapeHtml(phone)}</p>
+        <div class="chat-thread">
+          ${state.messageThreadMessages.length === 0 ? `<p class="chat-empty">Aucun message.</p>` : state.messageThreadMessages.map(chatBubbleHtml).join('')}
+        </div>
+        <form id="message-reply-form" class="chat-send-form">
+          <textarea name="body" placeholder="Répondre..." maxlength="1000" rows="3" required></textarea>
+          <button class="primary" type="submit">Envoyer</button>
+        </form>
+      </div>
+    `;
+  }
+  return `
+    ${state.messageThreads.length === 0 ? `<div class="card"><p>Aucun message pour l'instant.</p></div>` : state.messageThreads.map(t => `
+      <div class="card" data-open-message-thread="${escapeHtml(t.phone)}" style="cursor:pointer;">
+        <h2>${escapeHtml(t.display_name || t.phone)} ${t.unread_count > 0 ? `<span style="background:var(--red); color:#fff; font-size:11px; padding:2px 8px; border-radius:10px; margin-left:6px;">${t.unread_count}</span>` : ''}</h2>
+        <p style="font-size:12px; color:var(--muted);">${escapeHtml(t.phone)} · dernier message le ${escapeHtml(t.last_message_at)}</p>
       </div>
     `).join('')}
   `;
@@ -1028,10 +1097,33 @@ async function loadVerifications() {
   try {
     const data = await api(`/admin/verifications?purpose=${state.verifyPurpose}`);
     setState({ verifications: data.requests, loading: false });
+    loadVerificationChats(data.requests);
   } catch (err) {
     if (err.status === 401) { logout(); return; }
     setState({ error: err.message, loading: false });
   }
+}
+
+// Charge en parallèle la conversation de chaque demande en attente (voir "Tchat interne",
+// juillet 2026, routes/chat.js) — remplace le message WhatsApp que l'opérateur devait
+// auparavant recevoir/cross-vérifier manuellement : la personne indique désormais son code
+// directement dans cette conversation, affichée dans chaque carte à côté du code de
+// référence pour comparaison immédiate (voir renderVerificationsSection()). Volontairement
+// séparé de loadVerifications() ci-dessus (n'affecte pas state.loading) : la liste
+// s'affiche sans attendre que toutes les conversations aient fini de charger, chacune
+// apparaît dès qu'elle est prête.
+async function loadVerificationChats(requests) {
+  const purpose = state.verifyPurpose;
+  const chats = { ...state.verificationChats };
+  await Promise.all((requests || []).map(async (v) => {
+    try {
+      const data = await api(`/admin/chat/messages?phone=${encodeURIComponent(v.phone)}&purpose=${purpose}`);
+      chats[v.phone] = data.messages;
+    } catch {
+      // pas grave — on retentera au prochain chargement de l'onglet
+    }
+  }));
+  setState({ verificationChats: chats });
 }
 
 async function loadDeposits() {
@@ -1166,9 +1258,36 @@ async function loadContactSettings() {
   }
 }
 
+// Liste des conversations "support" (voir renderMessagesSection()) — recharge toujours la
+// liste (jamais une conversation ouverte, voir openMessageThread() plus bas pour ça) :
+// utilisé à l'ouverture de l'onglet et au retour depuis une conversation ("← Retour à la
+// liste"), pour rafraîchir les compteurs de messages non lus.
+async function loadMessageThreads() {
+  setState({ loading: true, error: '' });
+  try {
+    const data = await api('/admin/chat/threads?purpose=support');
+    setState({ messageThreads: data.threads, loading: false });
+  } catch (err) {
+    if (err.status === 401) { logout(); return; }
+    setState({ error: err.message, loading: false });
+  }
+}
+
+async function openMessageThread(phone) {
+  setState({ loading: true, error: '' });
+  try {
+    const data = await api(`/admin/chat/messages?phone=${encodeURIComponent(phone)}&purpose=support`);
+    setState({ openMessageThread: phone, messageThreadMessages: data.messages, loading: false });
+  } catch (err) {
+    if (err.status === 401) { logout(); return; }
+    setState({ error: err.message, loading: false });
+  }
+}
+
 function loadSection() {
   if (state.section === 'cashouts') return loadCashouts();
   if (state.section === 'verifications') return loadVerifications();
+  if (state.section === 'messages') return loadMessageThreads();
   if (state.section === 'deposits') return loadDeposits();
   if (state.section === 'vip') return loadVipPurchases();
   if (state.section === 'agents') return loadAgents();
@@ -1230,6 +1349,40 @@ function bind() {
   document.querySelectorAll('[data-reject-verify]').forEach(btn => {
     btn.addEventListener('click', () => rejectVerification(btn.dataset.rejectVerify));
   });
+  document.querySelectorAll('[data-verify-reply-form]').forEach(form => {
+    form.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const phone = form.dataset.verifyReplyForm;
+      const textarea = form.querySelector('textarea');
+      try {
+        await api('/admin/chat/reply', { method: 'POST', body: { phone, purpose: state.verifyPurpose, body: textarea.value } });
+        textarea.value = '';
+        loadVerificationChats(state.verifications);
+      } catch (err) {
+        setState({ error: err.message });
+      }
+    });
+  });
+
+  document.querySelectorAll('[data-open-message-thread]').forEach(card => {
+    card.addEventListener('click', () => openMessageThread(card.dataset.openMessageThread));
+  });
+  const messagesBackBtn = document.getElementById('messages-back-btn');
+  if (messagesBackBtn) messagesBackBtn.addEventListener('click', () => setState({ openMessageThread: null, messageThreadMessages: [] }));
+  const messageReplyForm = document.getElementById('message-reply-form');
+  if (messageReplyForm) {
+    messageReplyForm.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const text = new FormData(e.target).get('body');
+      try {
+        await api('/admin/chat/reply', { method: 'POST', body: { phone: state.openMessageThread, purpose: 'support', body: text } });
+        e.target.reset();
+        openMessageThread(state.openMessageThread);
+      } catch (err) {
+        setState({ error: err.message });
+      }
+    });
+  }
 
   document.querySelectorAll('[data-deposit-filter]').forEach(btn => {
     btn.addEventListener('click', () => { state.statusFilter = btn.dataset.depositFilter; loadDeposits(); });

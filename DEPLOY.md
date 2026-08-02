@@ -30,14 +30,14 @@ git push -u origin main
 4. Render détecte automatiquement le fichier `render.yaml` à la racine du projet et vous propose de créer le service décrit dedans (nommé `konkou`, avec son disque persistant de 1 Go). Vérifiez que ça correspond, puis cliquez sur **"Apply"**.
 5. Render va vous demander un moyen de paiement (nécessaire pour le disque persistant), installer les fichiers, puis démarrer le serveur. Ça prend 2-5 minutes.
 
-## Étape 3 — Récupérer votre mot de passe administrateur et définir votre numéro WhatsApp
+## Étape 3 — Récupérer votre mot de passe administrateur
 
 `render.yaml` génère automatiquement des valeurs aléatoires sécurisées pour `JWT_SECRET` et `ADMIN_PASSWORD` au moment du déploiement (au lieu d'utiliser les valeurs de démo du fichier `.env`).
 
 1. Dans le tableau de bord Render, ouvrez le service `konkou`.
 2. Allez dans l'onglet **"Environment"**.
 3. Cliquez sur l'œil à côté de `ADMIN_PASSWORD` pour le révéler, et **notez-le quelque part en sécurité** — c'est le mot de passe pour accéder à `/admin.html` (retraits, vérifications, dépôts).
-4. **Obligatoire** : modifiez `OPERATOR_WHATSAPP_NUMBER` (actuellement `REMPLACER_PAR_VOTRE_NUMERO`) pour y mettre le numéro WhatsApp qui recevra les messages de confirmation d'inscription/réinitialisation, au format E.164 **sans le "+"** (ex. `50937123456`). Sans ça, personne ne peut activer un compte ni réinitialiser un mot de passe — voir "Confirmation par WhatsApp" dans `README.md`.
+4. **Rien à faire ici depuis juillet 2026** : la confirmation d'inscription/réinitialisation se fait désormais via un tchat intégré à l'application elle-même (voir "Confirmation par tchat interne" dans `README.md`), sans dépendance à un numéro WhatsApp externe. `OPERATOR_WHATSAPP_NUMBER` reste dans `render.yaml` mais n'est plus utilisé par ce parcours ; vous pouvez l'ignorer.
 5. **Optionnel** (notifications push, voir "Notifications push" dans `README.md`) : sur votre ordinateur, lancez `node backend/generate-vapid-keys.js` dans le dossier du projet — ça affiche deux valeurs `VAPID_PUBLIC_KEY` et `VAPID_PRIVATE_KEY`. Collez-les dans les variables du même nom (actuellement `REMPLACER (node backend/generate-vapid-keys.js)`). Sans ça, l'app fonctionne normalement, seul le bouton "🔔 Activer les notifications" affichera une erreur.
 6. Cliquez sur **"Save Changes"** — Render redémarre automatiquement le service avec les nouvelles valeurs.
 
@@ -45,12 +45,12 @@ git push -u origin main
 
 Render vous donne une URL du type `https://konkou.onrender.com` (visible en haut du tableau de bord du service).
 
-- Ouvrez cette URL : l'app doit se charger normalement — inscrivez-vous pour tester, puis appuyez sur "Confirmer via WhatsApp" (ça doit ouvrir WhatsApp avec un message pré-rempli vers le numéro que vous avez configuré à l'étape 3).
-- Envoyez-vous ce message, puis ouvrez `https://konkou.onrender.com/admin.html`, connectez-vous avec le mot de passe récupéré à l'étape 3, onglet **Vérifications**, et confirmez la demande — l'app du joueur devrait se connecter automatiquement en quelques secondes.
+- Ouvrez cette URL : l'app doit se charger normalement — inscrivez-vous pour tester ; l'écran affiche votre code de confirmation et une conversation.
+- Écrivez un message (avec votre code) dans cette conversation, puis ouvrez `https://konkou.onrender.com/admin.html`, connectez-vous avec le mot de passe récupéré à l'étape 3, onglet **Vérifications** : vous devriez voir la même conversation dans la carte de votre demande — comparez le code, cliquez "✅ Confirmer" — l'app du joueur devrait se connecter automatiquement en quelques secondes.
 
 ## ⚠️ Avant de partager l'app publiquement
 
-La confirmation par WhatsApp dépend d'une personne qui surveille activement `OPERATOR_WHATSAPP_NUMBER` — sans surveillance régulière, les nouveaux joueurs resteront bloqués en attente de confirmation. Avant un vrai lancement à grande échelle, envisagez de brancher un vrai fournisseur SMS (voir la section correspondante dans `README.md`) pour automatiser cette étape.
+La confirmation par tchat interne dépend d'une personne qui surveille activement `/admin.html` (onglets **Vérifications** et **Messages**) — sans surveillance régulière, les nouveaux joueurs resteront bloqués en attente de confirmation. Avant un vrai lancement à grande échelle, envisagez de brancher un vrai fournisseur SMS (voir la section correspondante dans `README.md`) pour automatiser cette étape.
 
 ## Mettre à jour l'app plus tard
 

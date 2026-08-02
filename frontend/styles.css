@@ -417,6 +417,91 @@ textarea {
   margin-bottom: 12px;
 }
 
+/* Tchat interne Admin <-> joueur/agent (juillet 2026, voir routes/chat.js) — remplace la
+   confirmation par WhatsApp. Bulles alignées à gauche (admin) ou à droite (utilisateur),
+   dans un conteneur scrollable de hauteur limitée pour ne jamais pousser le reste de
+   l'écran hors champ même avec une longue conversation. */
+.chat-thread {
+  max-height: 260px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px;
+  margin-bottom: 10px;
+  background: rgba(0,0,0,0.15);
+  border-radius: 10px;
+}
+
+.chat-empty {
+  color: var(--muted);
+  font-size: 13px;
+  text-align: center;
+  margin: 10px 0;
+}
+
+.chat-msg {
+  max-width: 82%;
+  padding: 8px 10px;
+  border-radius: 10px;
+  font-size: 13px;
+}
+
+.chat-msg p {
+  margin: 2px 0 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.chat-msg-author {
+  font-size: 11px;
+  font-weight: 700;
+  opacity: 0.75;
+}
+
+/* app.js (joueur/agent) : "chat-msg-admin" = message reçu de l'admin, aligné à gauche. */
+.chat-msg-admin {
+  align-self: flex-start;
+  background: var(--card-2);
+  color: var(--text);
+}
+
+/* app.js : "chat-msg-user" = son propre message, aligné à droite. */
+.chat-msg-user {
+  align-self: flex-end;
+  background: var(--blue);
+  color: #fff;
+}
+
+/* admin.js : mêmes bulles, orientation inversée (le message de l'admin est "le sien" ici). */
+.chat-msg-self {
+  align-self: flex-end;
+  background: var(--blue);
+  color: #fff;
+}
+
+.chat-msg-other {
+  align-self: flex-start;
+  background: var(--card-2);
+  color: var(--text);
+}
+
+.chat-send-form {
+  display: flex;
+  gap: 8px;
+  align-items: flex-end;
+}
+
+.chat-send-form textarea {
+  margin-bottom: 0;
+  flex: 1;
+}
+
+.chat-send-form button {
+  margin-top: 0;
+  white-space: nowrap;
+}
+
 .choice-btn {
   width: 100%;
   text-align: left;

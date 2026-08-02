@@ -43,6 +43,17 @@ export function submitContact(body) {
   return { status: 200, data: { whatsappLink } };
 }
 
+// Numéro affiché publiquement sur le site (juillet 2026) — pure lecture, sans donnée
+// sensible (c'est exactement le numéro que l'admin a choisi d'afficher pour être joint
+// directement). Distinct de getContactSettings() ci-dessous (réservé à l'admin) : sert
+// uniquement à AFFICHER ce numéro en texte simple depuis que "Nous contacter" utilise le
+// tchat interne (routes/chat.js) plutôt qu'un lien wa.me automatique — voir
+// renderContactForm() dans app.js. "Toujours garder un numéro de contact sur le site" reste
+// donc possible même si les conversations elles-mêmes passent par le tchat.
+export function getPublicContactNumber() {
+  return { status: 200, data: { whatsappNumber: getSetting(SETTING_KEY) || null } };
+}
+
 // --- Réglages admin ---
 
 export function getContactSettings() {

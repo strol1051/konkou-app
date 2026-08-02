@@ -171,6 +171,21 @@ export function checkOtpStatus(phone, purpose, code) {
   return expired ? 'expired' : 'pending';
 }
 
+// Utilisé par routes/chat.js (tchat interne de confirmation, juillet 2026) pour vérifier
+// qu'un (phone, purpose, code) correspond bien à une demande déjà faite — le même triplet
+// que celui déjà utilisé comme "jeton" par checkVerificationStatus/consumeConfirmedOtp
+// ci-dessus, mais SANS condition sur used/expired : la conversation doit rester consultable
+// même après confirmation (used=1) ou expiration (ex: revenir lire la réponse de l'admin
+// juste après confirmation, ou reprendre une conversation après un léger dépassement du
+// délai). Contrairement à adminConfirmOtp, ceci ne modifie jamais la ligne — pure lecture.
+export function otpRequestExists(phone, purpose, code) {
+  if (!phone || !purpose || !code) return false;
+  const row = db.prepare(
+    `SELECT id FROM otp_codes WHERE phone = ? AND purpose = ? AND code = ? ORDER BY id DESC LIMIT 1`
+  ).get(phone, purpose, String(code));
+  return !!row;
+}
+
 // For the admin panel's "Vérifications" tab: every still-open request for a given
 // purpose, including the code itself so the operator can cross-check it against the
 // WhatsApp message they received.

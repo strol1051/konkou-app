@@ -19,6 +19,7 @@ import * as themeRoutes from './routes/theme.js';
 import * as adsRoutes from './routes/ads.js';
 import * as vipRoutes from './routes/vip.js';
 import * as pushRoutes from './routes/push.js';
+import * as chatRoutes from './routes/chat.js';
 
 loadEnv();
 
@@ -463,6 +464,74 @@ const server = http.createServer(async (req, res) => {
     // joueurs, connectés ou non, doivent pouvoir l'utiliser).
     if (pathname === '/api/contact' && method === 'POST') {
       const { status, data } = contactRoutes.submitContact(body);
+      return sendJson(res, status, data);
+    }
+
+    // Numéro affiché publiquement sur le site (juillet 2026) — public, voir
+    // contactRoutes.getPublicContactNumber pour le détail (distinct de la route admin
+    // /admin/settings/contact-whatsapp qui gère aussi ce même réglage).
+    if (pathname === '/api/contact/number' && method === 'GET') {
+      const { status, data } = contactRoutes.getPublicContactNumber();
+      return sendJson(res, status, data);
+    }
+
+    // ---------- Tchat interne (juillet 2026, voir routes/chat.js) ----------
+    // Remplace la confirmation par WhatsApp (inscription/réinitialisation) et le
+    // formulaire "Nous contacter" depuis le blocage du numéro opérateur par WhatsApp.
+
+    // Anonyme (avant connexion) — le triplet (phone, purpose, secret) fait office de
+    // preuve, comme /api/auth/verify-status. Limité par IP ET par numéro ciblé pour éviter
+    // qu'un tchat ouvert publiquement ne devienne un vecteur de spam à volume.
+    if (pathname === '/api/chat/anonymous/send' && method === 'POST') {
+      if (tooManyRequests(req, res, 'chat-anonymous-send', {
+        ipMax: 60, ipWindowMs: 60 * 60 * 1000,
+        targetKey: body?.phone ? String(body.phone).trim() : null, targetMax: 40, targetWindowMs: 60 * 60 * 1000
+      })) return;
+      const { status, data } = chatRoutes.sendAnonymousMessage(body);
+      return sendJson(res, status, data);
+    }
+
+    if (pathname === '/api/chat/anonymous/messages' && method === 'GET') {
+      const { status, data } = chatRoutes.getAnonymousMessages({
+        phone: url.searchParams.get('phone'),
+        purpose: url.searchParams.get('purpose'),
+        secret: url.searchParams.get('secret')
+      });
+      return sendJson(res, status, data);
+    }
+
+    // Authentifié (joueur/agent déjà connecté) — toujours purpose='support', voir
+    // routes/chat.js.
+    if (pathname === '/api/chat/send' && method === 'POST') {
+      const userId = requireAuth(req, res); if (userId == null) return;
+      const { status, data } = chatRoutes.sendAuthedMessage(userId, body);
+      return sendJson(res, status, data);
+    }
+
+    if (pathname === '/api/chat/messages' && method === 'GET') {
+      const userId = requireAuth(req, res); if (userId == null) return;
+      const { status, data } = chatRoutes.getAuthedMessages(userId);
+      return sendJson(res, status, data);
+    }
+
+    if (pathname === '/api/admin/chat/threads' && method === 'GET') {
+      if (!requireAdmin(req, res)) return;
+      const { status, data } = chatRoutes.listChatThreads(url.searchParams.get('purpose'));
+      return sendJson(res, status, data);
+    }
+
+    if (pathname === '/api/admin/chat/messages' && method === 'GET') {
+      if (!requireAdmin(req, res)) return;
+      const { status, data } = chatRoutes.getChatThreadMessages({
+        phone: url.searchParams.get('phone'),
+        purpose: url.searchParams.get('purpose')
+      });
+      return sendJson(res, status, data);
+    }
+
+    if (pathname === '/api/admin/chat/reply' && method === 'POST') {
+      if (!requireAdmin(req, res)) return;
+      const { status, data } = chatRoutes.adminReply(body);
       return sendJson(res, status, data);
     }
 
