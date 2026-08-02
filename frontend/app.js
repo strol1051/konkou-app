@@ -535,7 +535,22 @@ const state = {
   // contactRoutes.getPublicContactNumber) — "garder un numéro de contact sur le site" même
   // si les conversations elles-mêmes passent désormais par le tchat. null tant que non
   // chargé ou non configuré par l'admin.
-  contactPhoneNumber: null
+  contactPhoneNumber: null,
+  // Tchat interne Joueur <-> Agent (août 2026, voir routes/agentChat.js) — remplace le lien
+  // wa.me du bouton "💬 Contacter cet agent" (voir agentContactWhatsappLink(), supprimé).
+  // Côté JOUEUR : agentChatCode (le agentCode choisi, identifie la conversation auprès du
+  // serveur) + agentChatMeta ({ firstName, lastName }, purement pour l'affichage de l'écran,
+  // voir renderAgentChatForm()) — tous deux null tant qu'aucun agent n'a été choisi.
+  agentChatCode: null,
+  agentChatMeta: null,
+  // Côté AGENT (dans agentDashboardHtml()) : la liste des fils de discussion (un par
+  // joueur qui a écrit à cet agent — voir listAgentThreads()), chargée une fois avec le
+  // reste du tableau de bord (voir renderAgentMainAsync()). agentChatOpenPlayerId identifie
+  // le fil actuellement ouvert pour lecture/réponse (null = liste repliée), et
+  // agentChatOpenMessages son historique une fois chargé.
+  agentThreads: [],
+  agentChatOpenPlayerId: null,
+  agentChatOpenMessages: []
 };
 
 function setState(patch) {
@@ -659,10 +674,19 @@ function appendNewChatMessages(messages) {
   container.scrollTop = container.scrollHeight;
 }
 
+// Généralisé (août 2026) pour aussi afficher les messages du tchat Joueur<->Agent (voir
+// routes/agentChat.js), dont le vocabulaire de `sender` diffère ('player'/'agent' plutôt
+// que 'user'/'admin') — toujours du point de vue du JOUEUR ici (seul contexte où cette
+// fonction est utilisée côté joueur : confirmation, "Nous contacter", et maintenant
+// l'écran de tchat avec un agent). "Soi-même" = 'user' OU 'player' selon la conversation ;
+// "l'autre partie" = 'admin' OU 'agent'. Le rendu côté AGENT de ce même tchat (dans
+// agentDashboardHtml()) utilise sa propre fonction, agentThreadBubbleHtml(), puisque c'est
+// l'inverse qui y est "soi-même".
 function chatBubbleHtml(m) {
-  const isAdmin = m.sender === 'admin';
-  return `<div class="chat-msg ${isAdmin ? 'chat-msg-admin' : 'chat-msg-user'}">
-    <span class="chat-msg-author">${isAdmin ? 'Konkou' : 'Vous'}</span>
+  const isSelf = m.sender === 'user' || m.sender === 'player';
+  const author = m.sender === 'admin' ? 'Konkou' : (m.sender === 'agent' ? 'Agent' : 'Vous');
+  return `<div class="chat-msg ${isSelf ? 'chat-msg-user' : 'chat-msg-admin'}">
+    <span class="chat-msg-author">${author}</span>
     <p>${escapeHtml(m.body)}</p>
   </div>`;
 }
@@ -1057,6 +1081,83 @@ function bindContactEvents(onBack) {
   }
 }
 
+// ---------- TCHAT INTERNE JOUEUR <-> AGENT (août 2026, voir routes/agentChat.js) ----------
+// Remplace le bouton "💬 Contacter cet agent" (lien wa.me vers le numéro WhatsApp personnel
+// de l'agent — voir agentContactWhatsappLink(), supprimé) pour la même raison que le tchat
+// "Nous contacter" : éviter qu'un numéro personnel se fasse bloquer par WhatsApp à force de
+// recevoir des messages automatisés depuis l'app. Toujours authentifié des deux côtés (voir
+// routes/agentChat.js) — pas de conversation anonyme possible ici, contrairement au tchat
+// support, puisqu'un joueur non connecté ne peut de toute façon pas choisir d'agent.
+// Entrée : bouton "💬 Contacter cet agent" sous le sélecteur d'agent (dépôt/retrait/VIP —
+// voir bindAgentSelectInfo() plus bas), qui pose state.agentChatCode/agentChatMeta puis
+// bascule sur state.view = 'agentChat'. Sortie : toujours vers 'wallet', seul point d'entrée
+// possible pour cet écran.
+
+function renderAgentChatForm() {
+  const meta = state.agentChatMeta || {};
+  const fullName = [meta.firstName, meta.lastName].filter(Boolean).map(escapeHtml).join(' ');
+  return `
+    <div class="card">
+      <h2>💬 ${fullName || 'Agent'}</h2>
+      <p style="font-size:13px;">Écrivez à cet agent — il vous répond ici même.</p>
+      <div id="chat-thread" class="chat-thread">
+        <p class="chat-empty">Aucun message pour l'instant.</p>
+      </div>
+      <p style="font-size:12px; color:var(--muted); margin:0 0 4px;">✍️ Écrire un message :</p>
+      <form id="agent-chat-send-form" class="chat-send-form">
+        <textarea name="body" placeholder="Votre message..." maxlength="1000" rows="2" required autofocus></textarea>
+        <button class="primary" type="submit">Envoyer</button>
+      </form>
+      <button class="link-btn" id="agent-chat-back" style="margin-top:14px;">Retour</button>
+    </div>
+  `;
+}
+
+// Vrai tant que l'écran de tchat avec un agent est effectivement affiché — relu à chaque
+// tick de sondage (même principe que isOnContactScreen()) pour arrêter proprement le
+// sondage dès qu'on quitte cet écran par un autre chemin que le bouton "Retour" (ex: barre
+// d'onglets).
+function isOnAgentChatScreen() {
+  return !state.isAgent && !!state.token && state.view === 'agentChat' && !!state.agentChatCode;
+}
+
+// Source de messages pour startChatPolling() côté tchat Joueur<->Agent — toujours
+// authentifiée (jeton de session), jamais de secret à transporter (voir le commentaire en
+// tête de section).
+async function agentPlayerChatMessages() {
+  if (!isOnAgentChatScreen()) return null;
+  const data = await api(`/agent-chat/messages?agentCode=${encodeURIComponent(state.agentChatCode)}`);
+  return data.messages || [];
+}
+
+function startAgentChatPolling() {
+  startChatPolling(agentPlayerChatMessages);
+}
+
+function bindAgentChatEvents() {
+  document.getElementById('agent-chat-back').addEventListener('click', () => {
+    stopChatPolling();
+    setState({ view: 'wallet', agentChatCode: null, agentChatMeta: null, error: '', success: '' });
+  });
+
+  const sendForm = document.getElementById('agent-chat-send-form');
+  if (sendForm) {
+    sendForm.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const text = new FormData(e.target).get('body');
+      try {
+        await api('/agent-chat/send', { method: 'POST', body: { agentCode: state.agentChatCode, body: text } });
+        e.target.reset();
+        // Redéclenche immédiatement un sondage plutôt que d'attendre le prochain tick — même
+        // principe que bindContactEvents()/bindAwaitingConfirmEvents().
+        if (chatTick) chatTick();
+      } catch (err) {
+        setState({ error: err.message });
+      }
+    });
+  }
+}
+
 // Depuis la refonte de juillet 2026, cette demande ne contient plus de nouveau mot de
 // passe (voir forgotPassword() dans routes/auth.js) — même principe que l'inscription :
 // on demande d'abord, un admin autorise ensuite dans "Vérifications", et c'est SEULEMENT
@@ -1360,6 +1461,7 @@ function renderView() {
     case 'wallet': return renderWallet();
     case 'profile': return renderProfile();
     case 'contact': return renderContactForm();
+    case 'agentChat': return renderAgentChatForm();
     default: return renderHome();
   }
 }
@@ -2097,26 +2199,20 @@ function agentSelectHtml(agents, selectId) {
   return `
     <select name="agentCode" id="${selectId}" required>
       <option value="">Choisir un agent</option>
-      ${agents.map(a => `<option value="${escapeHtml(a.agentCode)}" data-city="${escapeHtml(a.city || '')}" data-address="${escapeHtml(a.address || '')}" data-phone="${escapeHtml(a.phone || '')}" data-first-name="${escapeHtml(a.firstName || '')}">${escapeHtml(a.fullCode || a.agentCode)} — ${escapeHtml(a.firstName)} ${escapeHtml(a.lastName)} — ${escapeHtml([a.city, a.address].filter(Boolean).join(', '))}</option>`).join('')}
+      ${agents.map(a => `<option value="${escapeHtml(a.agentCode)}" data-city="${escapeHtml(a.city || '')}" data-address="${escapeHtml(a.address || '')}" data-phone="${escapeHtml(a.phone || '')}" data-first-name="${escapeHtml(a.firstName || '')}" data-last-name="${escapeHtml(a.lastName || '')}">${escapeHtml(a.fullCode || a.agentCode)} — ${escapeHtml(a.firstName)} ${escapeHtml(a.lastName)} — ${escapeHtml([a.city, a.address].filter(Boolean).join(', '))}</option>`).join('')}
     </select>
     <div id="${selectId}-info" class="card" style="display:none; padding:12px; margin-top:-2px;"></div>
   `;
 }
 
-// Lien wa.me pré-rempli vers l'agent choisi — même principe que le formulaire "Nous
-// contacter" (voir routes/contact.js) et la confirmation d'inscription (otp.js) : construit
-// entièrement côté client (le téléphone de l'agent est déjà dans les données du
-// sélecteur, pas besoin d'aller-retour serveur), c'est le joueur qui envoie lui-même le
-// message depuis sa propre app WhatsApp.
-function agentContactWhatsappLink(phone, agentFirstName) {
-  const playerName = state.user?.name || 'un joueur Konkou';
-  const text = `Bonjour${agentFirstName ? ` ${agentFirstName}` : ''}, je suis ${playerName} sur Konkou. J'ai une question à propos d'une demande chez vous.`;
-  return `https://wa.me/${phone}?text=${encodeURIComponent(text)}`;
-}
-
 // Met à jour l'encart "📍 Infos agent" (ville/adresse + bouton de contact) sous le
 // sélecteur dès que le joueur choisit un agent — pour qu'il sache où se rendre, et
 // puisse déjà le joindre en cas de question, avant même de valider sa demande.
+// Depuis août 2026, le bouton "💬 Contacter cet agent" ouvre le tchat interne (voir
+// renderAgentChatForm() plus haut) au lieu d'un lien wa.me vers le numéro WhatsApp
+// personnel de l'agent (ancien agentContactWhatsappLink(), supprimé — même raison que le
+// tchat "Nous contacter" : éviter qu'un numéro personnel se fasse bloquer par WhatsApp). Le
+// numéro de l'agent reste affiché en texte simple, sans lien, en complément.
 function bindAgentSelectInfo(selectId) {
   const select = document.getElementById(selectId);
   const info = document.getElementById(`${selectId}-info`);
@@ -2127,15 +2223,23 @@ function bindAgentSelectInfo(selectId) {
     const address = opt?.dataset.address;
     const phone = opt?.dataset.phone;
     const firstName = opt?.dataset.firstName;
+    const lastName = opt?.dataset.lastName;
+    const agentCode = opt?.value;
     if (opt && opt.value && (city || address || phone)) {
       info.style.display = 'block';
       info.innerHTML = `
         <strong>📍 Infos agent</strong>
         ${(city || address) ? `<p style="margin:6px 0 0;">${[city, address].filter(Boolean).map(escapeHtml).join(' — ')}</p>` : ''}
-        ${phone ? `
-          <a href="${agentContactWhatsappLink(phone, firstName)}" target="_blank" rel="noopener" class="primary" style="display:block; text-align:center; text-decoration:none; background:#25D366; margin-top:10px;">💬 Contacter cet agent</a>
-        ` : ''}
+        ${phone ? `<p style="margin:6px 0 0; font-size:13px; color:var(--muted);">☎️ ${escapeHtml(phone)}</p>` : ''}
+        <button type="button" class="primary" id="${selectId}-chat-btn" style="display:block; width:100%; margin-top:10px;">💬 Contacter cet agent</button>
       `;
+      const chatBtn = document.getElementById(`${selectId}-chat-btn`);
+      if (chatBtn) {
+        chatBtn.addEventListener('click', () => {
+          setState({ view: 'agentChat', agentChatCode: agentCode, agentChatMeta: { firstName, lastName }, error: '', success: '' });
+          startAgentChatPolling();
+        });
+      }
     } else {
       info.style.display = 'none';
       info.innerHTML = '';
@@ -2617,10 +2721,20 @@ async function renderAgentMainAsync() {
       html = agentRejectedHtml(me.agent);
     } else {
       const query = agentCommissionDate ? `?date=${encodeURIComponent(agentCommissionDate)}` : '';
-      const [dash, commission] = await Promise.all([
+      // /agents/chat/threads (et, si un fil est ouvert, /agents/chat/messages) chargés ici
+      // avec le reste plutôt que via un state rafraîchi séparément — même flux que dash/
+      // commission, cohérent avec le fait que cette fonction entière est déjà rappelée à
+      // chaque render() tant que agentScreen === 'main' (voir bindAgentShellEvents()), ce qui
+      // fait qu'ouvrir/répondre à un fil (via setState) redéclenche naturellement cette
+      // même récupération sans mécanisme de sondage séparé côté agent.
+      const [dash, commission, chatThreads, openThreadMessages] = await Promise.all([
         api('/agents/dashboard'),
-        api(`/agents/commission-by-day${query}`)
+        api(`/agents/commission-by-day${query}`),
+        api('/agents/chat/threads'),
+        state.agentChatOpenPlayerId ? api(`/agents/chat/messages?playerUserId=${state.agentChatOpenPlayerId}`) : Promise.resolve(null)
       ]);
+      state.agentThreads = chatThreads.threads || [];
+      state.agentChatOpenMessages = openThreadMessages ? (openThreadMessages.messages || []) : [];
       html = agentDashboardHtml(dash, commission);
     }
     const content = document.getElementById('agent-shell-content');
@@ -2750,6 +2864,7 @@ function agentDashboardHtml(dash, commission) {
       <p style="font-size:12px; color:var(--muted);">${commission?.cashoutsCount ?? 0} retrait(s) payé(s) ${commission?.date ? 'ce jour-là' : 'au total'} · ${dash.commissionPercent}% par retrait, réglé hors app.</p>
     </div>
     ${agentReimbursementCardHtml(dash)}
+    ${agentMessagesCardHtml()}
     <div class="card">
       <h2>Dépôts à confirmer</h2>
       ${dash.pendingDeposits.length === 0 ? '<p>Aucun dépôt en attente.</p>' : dash.pendingDeposits.map(d => `
@@ -2813,6 +2928,57 @@ function agentDashboardHtml(dash, commission) {
     </div>
     ${agentDeleteAccountBlock(dash)}
   `;
+}
+
+// Tchat interne Joueur <-> Agent, côté AGENT (août 2026, voir routes/agentChat.js) —
+// même feature que renderAgentChatForm() côté joueur, vue depuis l'agent. Volontairement
+// SANS sondage automatique (contrairement au côté joueur) : cette carte est rafraîchie via
+// le même mécanisme que le reste du tableau de bord (renderAgentMainAsync() rappelée à
+// chaque render(), voir bindAgentShellEvents()), donc à chaque action de l'agent — même
+// principe que l'onglet "Messages" de l'admin (admin.js), qui ne sonde pas non plus.
+// state.agentThreads (liste) et state.agentChatOpenMessages (fil ouvert, le cas échéant)
+// sont chargés par renderAgentMainAsync() ; agentChatOpenPlayerId bascule entre les deux
+// vues (liste repliée / fil ouvert).
+function agentMessagesCardHtml() {
+  const threads = state.agentThreads || [];
+  const openId = state.agentChatOpenPlayerId;
+  const openThread = openId ? threads.find(t => t.player_user_id === openId) : null;
+  return `
+    <div class="card">
+      <h2>💬 Messages des joueurs</h2>
+      ${!openId ? (
+        threads.length === 0 ? '<p>Aucun message pour le moment.</p>' : threads.map(t => `
+          <div class="tx-row" data-open-agent-thread="${t.player_user_id}" style="cursor:pointer;">
+            <span>${escapeHtml(t.player_name)} (${escapeHtml(t.player_phone)})${t.unread_count > 0 ? ` <strong style="color:var(--red);">● ${t.unread_count}</strong>` : ''}</span>
+            <span style="font-size:11px; color:var(--muted);">${escapeHtml(String(t.last_message_at || '').slice(0, 16))}</span>
+          </div>
+        `).join('')
+      ) : `
+        <button class="link-btn" id="agent-thread-back-btn" style="margin-bottom:10px;">← Retour à la liste</button>
+        <p style="font-size:13px; margin:0 0 8px;"><strong>${escapeHtml(openThread?.player_name || '')}</strong> (${escapeHtml(openThread?.player_phone || '')})</p>
+        <div id="agent-thread-messages" class="chat-thread">
+          ${(state.agentChatOpenMessages || []).length === 0 ? '<p class="chat-empty">Aucun message.</p>' : (state.agentChatOpenMessages || []).map(agentThreadBubbleHtml).join('')}
+        </div>
+        <p style="font-size:12px; color:var(--muted); margin:10px 0 4px;">✍️ Répondre :</p>
+        <form id="agent-thread-reply-form" class="chat-send-form">
+          <textarea name="body" placeholder="Votre réponse..." maxlength="1000" rows="2" required></textarea>
+          <button class="primary" type="submit">Envoyer</button>
+        </form>
+      `}
+    </div>
+  `;
+}
+
+// Rendu d'un message du point de vue de l'AGENT — l'inverse de chatBubbleHtml() (où "soi-
+// même" est le joueur) : ici "soi-même" = sender==='agent'. Fonction séparée plutôt qu'un
+// paramètre supplémentaire sur chatBubbleHtml(), pour ne pas complexifier une fonction déjà
+// partagée par trois écrans côté joueur.
+function agentThreadBubbleHtml(m) {
+  const isMine = m.sender === 'agent';
+  return `<div class="chat-msg ${isMine ? 'chat-msg-user' : 'chat-msg-admin'}">
+    <span class="chat-msg-author">${isMine ? 'Vous' : 'Joueur'}</span>
+    <p>${escapeHtml(m.body)}</p>
+  </div>`;
 }
 
 function refillStatusLabel(status) {
@@ -2903,6 +3069,34 @@ function bindAgentEvents() {
     });
   }
 
+  document.querySelectorAll('[data-open-agent-thread]').forEach(row => {
+    row.addEventListener('click', () => {
+      setState({ agentChatOpenPlayerId: Number(row.dataset.openAgentThread), agentChatOpenMessages: [], error: '', success: '' });
+    });
+  });
+  const agentThreadBackBtn = document.getElementById('agent-thread-back-btn');
+  if (agentThreadBackBtn) {
+    agentThreadBackBtn.addEventListener('click', () => {
+      setState({ agentChatOpenPlayerId: null, agentChatOpenMessages: [], error: '', success: '' });
+    });
+  }
+  const agentThreadReplyForm = document.getElementById('agent-thread-reply-form');
+  if (agentThreadReplyForm) {
+    agentThreadReplyForm.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const text = new FormData(e.target).get('body');
+      try {
+        await api('/agents/chat/reply', { method: 'POST', body: { playerUserId: state.agentChatOpenPlayerId, body: text } });
+        // setState() redéclenche renderAgentMainAsync() (voir bindAgentShellEvents()), qui
+        // recharge le fil ouvert avec la réponse qu'on vient d'envoyer — pas d'affichage
+        // optimiste nécessaire ici (même principe qu'ailleurs dans ce fichier).
+        setState({ error: '', success: '' });
+      } catch (err) {
+        setState({ error: err.message, success: '' });
+      }
+    });
+  }
+
   const agentShowDeleteBtn = document.getElementById('agent-show-delete-account');
   if (agentShowDeleteBtn) agentShowDeleteBtn.addEventListener('click', () => { confirmingDeleteAccount = true; setState({ error: '' }); });
 
@@ -2942,6 +3136,7 @@ function bindViewEvents() {
   if (state.view === 'stakePrompt') bindStakePromptEvents();
   if (state.view === 'trivia' || state.view === 'puzzle') bindGameEvents();
   if (state.view === 'contact') bindContactEvents(() => setState({ view: 'profile', error: '', success: '' }));
+  if (state.view === 'agentChat') bindAgentChatEvents();
   // leaderboard / wallet / profile bind themselves after async load
 }
 

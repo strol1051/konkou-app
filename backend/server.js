@@ -20,6 +20,7 @@ import * as adsRoutes from './routes/ads.js';
 import * as vipRoutes from './routes/vip.js';
 import * as pushRoutes from './routes/push.js';
 import * as chatRoutes from './routes/chat.js';
+import * as agentChatRoutes from './routes/agentChat.js';
 
 loadEnv();
 
@@ -544,6 +545,46 @@ const server = http.createServer(async (req, res) => {
     if (pathname === '/api/admin/chat/reply' && method === 'POST') {
       if (!requireAdmin(req, res)) return;
       const { status, data } = chatRoutes.adminReply(body);
+      return sendJson(res, status, data);
+    }
+
+    // ---------- Tchat interne Joueur <-> Agent (août 2026, voir routes/agentChat.js) ----------
+    // Même motivation que le bloc /api/chat ci-dessus, appliquée cette fois au bouton
+    // "Contacter cet agent" (numéro WhatsApp personnel de chaque agent). Toujours
+    // authentifié des deux côtés — voir routes/agentChat.js pour le détail.
+
+    // Joueur (jamais un agent — un agent ne "contacte" pas un autre agent via cet écran).
+    if (pathname === '/api/agent-chat/send' && method === 'POST') {
+      const userId = requireAuth(req, res); if (userId == null) return;
+      if (blockIfAgent(req, res, userId)) return;
+      if (tooManyRequests(req, res, 'agent-chat-send', { ipMax: 60, ipWindowMs: 60 * 60 * 1000 })) return;
+      const { status, data } = agentChatRoutes.sendPlayerMessage(userId, body);
+      return sendJson(res, status, data);
+    }
+
+    if (pathname === '/api/agent-chat/messages' && method === 'GET') {
+      const userId = requireAuth(req, res); if (userId == null) return;
+      if (blockIfAgent(req, res, userId)) return;
+      const { status, data } = agentChatRoutes.getPlayerMessages(userId, { agentCode: url.searchParams.get('agentCode') });
+      return sendJson(res, status, data);
+    }
+
+    // Agent (identifié comme les autres routes /api/agents/*, voir agentsRoutes.getAgentDashboard).
+    if (pathname === '/api/agents/chat/threads' && method === 'GET') {
+      const userId = requireAuth(req, res); if (userId == null) return;
+      const { status, data } = agentChatRoutes.listAgentThreads(userId);
+      return sendJson(res, status, data);
+    }
+
+    if (pathname === '/api/agents/chat/messages' && method === 'GET') {
+      const userId = requireAuth(req, res); if (userId == null) return;
+      const { status, data } = agentChatRoutes.getAgentThreadMessages(userId, { playerUserId: url.searchParams.get('playerUserId') });
+      return sendJson(res, status, data);
+    }
+
+    if (pathname === '/api/agents/chat/reply' && method === 'POST') {
+      const userId = requireAuth(req, res); if (userId == null) return;
+      const { status, data } = agentChatRoutes.sendAgentMessage(userId, body);
       return sendJson(res, status, data);
     }
 

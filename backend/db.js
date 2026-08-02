@@ -335,6 +335,28 @@ CREATE TABLE IF NOT EXISTS chat_messages (
   read_by_user INTEGER NOT NULL DEFAULT 0,
   created_at TEXT DEFAULT (datetime('now'))
 );
+
+-- Tchat interne Joueur <-> Agent (août 2026) — même motivation que chat_messages
+-- ci-dessus (WhatsApp a bloqué un numéro pour excès de messages), appliquée cette fois
+-- au bouton "Contacter cet agent" qui exposait le numéro WhatsApp personnel de CHAQUE
+-- agent au même risque. Table dédiée plutôt qu'une réutilisation de chat_messages : ici
+-- les DEUX parties sont TOUJOURS authentifiées (un joueur connecté, un agent connecté —
+-- jamais de "secret" pour un accès anonyme, contrairement à chat_messages), et la
+-- conversation est scopée par la paire (player_user_id, agent_id) plutôt que par un
+-- simple numéro de téléphone. Règle volontaire : seul le joueur peut démarrer une
+-- conversation (comme avant avec le bouton "Contacter cet agent") — un agent ne peut que
+-- RÉPONDRE à un fil déjà ouvert par un joueur, jamais en initier un lui-même (voir
+-- sendAgentMessage() dans routes/agentChat.js).
+CREATE TABLE IF NOT EXISTS agent_chat_messages (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  player_user_id INTEGER NOT NULL,
+  agent_id INTEGER NOT NULL, -- agents.id, comme deposits.agent_id/cashouts.agent_id/vip_purchases.agent_id
+  sender TEXT NOT NULL, -- 'player' | 'agent'
+  body TEXT NOT NULL,
+  read_by_player INTEGER NOT NULL DEFAULT 0,
+  read_by_agent INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT DEFAULT (datetime('now'))
+);
 `);
 
 // Lightweight migrations for databases created before these columns existed.
