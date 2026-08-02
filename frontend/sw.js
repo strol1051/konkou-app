@@ -3,7 +3,15 @@
 // s'affichaient jamais tant que le nom du cache ne changeait pas. Passage en
 // network-first pour l'app shell : on sert toujours la version la plus récente quand
 // une connexion est disponible, et on ne retombe sur le cache qu'hors-ligne.
-const CACHE_NAME = 'konkou-shell-v2';
+// v3 (juillet 2026) : le network-first de v2 appelait fetch() sans préciser d'option de
+// cache — ce qui laisse le NAVIGATEUR lui-même décider de servir une réponse depuis SON
+// propre cache HTTP local plutôt que d'aller réellement sur le réseau, si le serveur
+// n'envoyait aucun en-tête Cache-Control (corrigé côté serveur en même temps, voir
+// backend/server.js, NO_CACHE). Un correctif de style.css ne s'affichait donc pas sur un
+// appareil qui avait déjà visité l'app, même après une vraie mise à jour serveur. Changer
+// CACHE_NAME force ce service worker à repartir d'un cache vide dès sa prochaine
+// activation (voir 'activate' ci-dessous, qui supprime tout cache dont le nom diffère).
+const CACHE_NAME = 'konkou-shell-v3';
 const SHELL_FILES = ['/', '/index.html', '/styles.css', '/app.js', '/push-client.js', '/manifest.json', '/icon.png', '/logo.png', '/logo-watermark.png'];
 
 self.addEventListener('install', (event) => {

@@ -82,6 +82,18 @@ function serveUpload(req, res, pathname) {
   });
 }
 
+// Aucun 'Cache-Control' n'était envoyé pour ces fichiers avant juillet 2026 — sans en-tête
+// explicite, un navigateur applique ses propres heuristiques et peut continuer à servir une
+// version LOCALE mise en cache d'un fichier (styles.css, app.js...) même après un
+// déploiement qui l'a changé côté serveur, y compris malgré le service worker "network
+// first" (sw.js) : celui-ci appelle fetch() normalement, qui passe lui-même par le cache
+// HTTP du navigateur si rien ne l'en empêche. 'no-cache' (PAS 'no-store') force une
+// revalidation avec le serveur à chaque requête (le navigateur redemande toujours, quitte à
+// obtenir un 304 rapide s'il connaissait déjà le contenu) — supprime cette classe de bug
+// "le correctif est déployé mais l'appareil du joueur affiche encore l'ancienne version"
+// pour toute mise à jour future, sans configurer de versioning de fichiers plus complexe.
+const NO_CACHE = { 'Cache-Control': 'no-cache' };
+
 function serveStatic(req, res, pathname) {
   let filePath = path.join(FRONTEND_DIR, pathname === '/' ? 'index.html' : pathname);
   if (!filePath.startsWith(FRONTEND_DIR)) {
@@ -92,13 +104,13 @@ function serveStatic(req, res, pathname) {
       // SPA fallback for unknown routes (client-side navigation)
       fs.readFile(path.join(FRONTEND_DIR, 'index.html'), (err2, indexContent) => {
         if (err2) { res.writeHead(404); res.end('Not found'); return; }
-        res.writeHead(200, { 'Content-Type': MIME['.html'], ...SECURITY_HEADERS });
+        res.writeHead(200, { 'Content-Type': MIME['.html'], ...SECURITY_HEADERS, ...NO_CACHE });
         res.end(indexContent);
       });
       return;
     }
     const ext = path.extname(filePath);
-    res.writeHead(200, { 'Content-Type': MIME[ext] || 'application/octet-stream', ...SECURITY_HEADERS });
+    res.writeHead(200, { 'Content-Type': MIME[ext] || 'application/octet-stream', ...SECURITY_HEADERS, ...NO_CACHE });
     res.end(content);
   });
 }
