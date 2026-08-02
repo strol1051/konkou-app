@@ -2199,7 +2199,7 @@ function agentSelectHtml(agents, selectId) {
   return `
     <select name="agentCode" id="${selectId}" required>
       <option value="">Choisir un agent</option>
-      ${agents.map(a => `<option value="${escapeHtml(a.agentCode)}" data-city="${escapeHtml(a.city || '')}" data-address="${escapeHtml(a.address || '')}" data-phone="${escapeHtml(a.phone || '')}" data-first-name="${escapeHtml(a.firstName || '')}" data-last-name="${escapeHtml(a.lastName || '')}">${escapeHtml(a.fullCode || a.agentCode)} — ${escapeHtml(a.firstName)} ${escapeHtml(a.lastName)} — ${escapeHtml([a.city, a.address].filter(Boolean).join(', '))}</option>`).join('')}
+      ${agents.map(a => `<option value="${escapeHtml(a.agentCode)}" data-full-code="${escapeHtml(a.fullCode || a.agentCode)}" data-city="${escapeHtml(a.city || '')}" data-address="${escapeHtml(a.address || '')}" data-first-name="${escapeHtml(a.firstName || '')}" data-last-name="${escapeHtml(a.lastName || '')}">${escapeHtml(a.fullCode || a.agentCode)} — ${escapeHtml(a.firstName)} ${escapeHtml(a.lastName)} — ${escapeHtml([a.city, a.address].filter(Boolean).join(', '))}</option>`).join('')}
     </select>
     <div id="${selectId}-info" class="card" style="display:none; padding:12px; margin-top:-2px;"></div>
   `;
@@ -2212,7 +2212,8 @@ function agentSelectHtml(agents, selectId) {
 // renderAgentChatForm() plus haut) au lieu d'un lien wa.me vers le numéro WhatsApp
 // personnel de l'agent (ancien agentContactWhatsappLink(), supprimé — même raison que le
 // tchat "Nous contacter" : éviter qu'un numéro personnel se fasse bloquer par WhatsApp). Le
-// numéro de l'agent reste affiché en texte simple, sans lien, en complément.
+// numéro de téléphone de l'agent n'est plus affiché du tout ici — seuls son numéro d'agent
+// (code), son nom et son adresse le sont ; le tchat couvre déjà le contact.
 function bindAgentSelectInfo(selectId) {
   const select = document.getElementById(selectId);
   const info = document.getElementById(`${selectId}-info`);
@@ -2221,16 +2222,21 @@ function bindAgentSelectInfo(selectId) {
     const opt = select.selectedOptions[0];
     const city = opt?.dataset.city;
     const address = opt?.dataset.address;
-    const phone = opt?.dataset.phone;
     const firstName = opt?.dataset.firstName;
     const lastName = opt?.dataset.lastName;
+    const fullCode = opt?.dataset.fullCode;
     const agentCode = opt?.value;
-    if (opt && opt.value && (city || address || phone)) {
+    // Numéro d'agent + nom + adresse uniquement — plus de numéro de téléphone affiché ici
+    // (août 2026) : le tchat interne ci-dessous couvre déjà le contact, exposer aussi le
+    // numéro personnel de l'agent n'apporte plus rien et va à l'encontre de la raison même
+    // du tchat (éviter que ce numéro serve de canal de contact direct, cible potentielle de
+    // blocage WhatsApp comme ce qui est arrivé au numéro opérateur).
+    if (opt && opt.value && (city || address)) {
       info.style.display = 'block';
       info.innerHTML = `
         <strong>📍 Infos agent</strong>
+        <p style="margin:6px 0 0;">${escapeHtml(fullCode || agentCode)} — ${[firstName, lastName].filter(Boolean).map(escapeHtml).join(' ')}</p>
         ${(city || address) ? `<p style="margin:6px 0 0;">${[city, address].filter(Boolean).map(escapeHtml).join(' — ')}</p>` : ''}
-        ${phone ? `<p style="margin:6px 0 0; font-size:13px; color:var(--muted);">☎️ ${escapeHtml(phone)}</p>` : ''}
         <button type="button" class="primary" id="${selectId}-chat-btn" style="display:block; width:100%; margin-top:10px;">💬 Contacter cet agent</button>
       `;
       const chatBtn = document.getElementById(`${selectId}-chat-btn`);
