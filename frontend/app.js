@@ -1114,12 +1114,13 @@ function renderAwaitingConfirm() {
       <p>Numéro : <strong>${escapeHtml(a.phone || '')}</strong></p>
       <p style="font-size:13px;">Votre code de confirmation :</p>
       <p style="font-size:28px; font-weight:800; letter-spacing:4px; text-align:center;">${escapeHtml(a.code || '')}</p>
-      <p style="font-size:13px;">Indiquez ce code à l'administrateur dans la conversation ci-dessous pour confirmer votre identité — ${isReset
+      <p style="font-size:13px;">Indiquez ce code à l'administrateur dans le champ de message tout en bas de cette carte pour confirmer votre identité — ${isReset
         ? "vous pourrez ensuite choisir votre nouveau mot de passe directement dans l'application."
         : 'votre compte sera activé automatiquement dès la confirmation.'}</p>
-      <div id="chat-thread" class="chat-thread"><p class="chat-empty">Écrivez votre code ci-dessous pour commencer.</p></div>
+      <div id="chat-thread" class="chat-thread"><p class="chat-empty">Aucun message pour l'instant.</p></div>
+      <p style="font-size:12px; color:var(--muted); margin:0 0 4px;">✍️ Écrire un message :</p>
       <form id="chat-send-form" class="chat-send-form">
-        <textarea name="body" placeholder="Ex : Bonjour, mon code est ${escapeHtml(a.code || '123456')}" maxlength="1000" rows="2" required></textarea>
+        <textarea name="body" placeholder="Ex : Bonjour, mon code est ${escapeHtml(a.code || '123456')}" maxlength="1000" rows="2" autofocus required></textarea>
         <button class="primary" type="submit">Envoyer</button>
       </form>
       <p class="center-msg" style="padding:14px 0;">⏳ En attente de confirmation…</p>
