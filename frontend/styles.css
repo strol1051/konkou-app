@@ -494,11 +494,22 @@ textarea {
 
 .chat-send-form textarea {
   margin-bottom: 0;
-  flex: 1;
+  flex: 1 1 0%;
+  min-width: 0;
 }
 
+/* .primary/.tile (voir plus haut) posent "width: 100%" sur tout bouton par défaut — dans
+   ce conteneur flex, "width: 100%" devient le flex-basis du bouton (flex-basis: auto
+   résout sur "width" quand elle est définie), donc SANS ce correctif le bouton réclamait
+   à lui seul toute la largeur de la ligne et écrasait le textarea à une largeur quasi
+   nulle (bug remonté en production, juillet 2026) — "width: auto" + "flex: 0 0 auto"
+   annulent ce comportement pour que le bouton ne prenne que la largeur de son texte,
+   laissant tout le reste au textarea (flex: 1 1 0% ci-dessus).
+*/
 .chat-send-form button {
   margin-top: 0;
+  width: auto;
+  flex: 0 0 auto;
   white-space: nowrap;
 }
 
