@@ -1,7 +1,7 @@
 // Konkou - application front-end (vanilla JS, aucune dépendance / aucun build requis)
 
 import { startGameMusic, stopGameMusic, toggleMusic, isMusicEnabled } from './music.js';
-import { isPushSubscribed, notificationsToggleHtml, bindNotificationsToggleEvents } from './push-client.js';
+import { isPushSubscribed, notificationsToggleHtml, bindNotificationsToggleEvents, subscribeToPush } from './push-client.js';
 
 const APP = document.getElementById('app');
 
@@ -58,6 +58,56 @@ function bindAppNotificationsToggleEvents() {
     if (result.status === 'dismissed') { return; } // fenêtre système fermée sans choix — pas d'erreur à afficher
     setState({ error: result.error || 'Erreur inconnue lors de l\'activation des notifications.' });
   });
+}
+
+// Bannière de rappel discret et répété (juillet 2026) — demandée en remplacement d'une
+// activation forcée des notifications (techniquement impossible, voir discussion avec
+// l'opérateur : Notification.requestPermission() est entièrement contrôlée par le
+// navigateur). Affichée en haut de l'écran d'accueil joueur (renderHome) et du tableau de
+// bord agent (agentDashboardHtml) tant que CET appareil n'est pas abonné — jamais sur
+// Profil/Espace Agent puisque le vrai bouton complet (appNotificationsToggleHtml) y est déjà
+// présent, ni côté admin (qui a son propre toggle explicite dans Réglages, hors périmètre de
+// cette demande qui portait sur "coté utilisateur/Agent"). Contrairement à ce bouton complet,
+// celle-ci n'offre qu'un aller simple vers l'abonnement (jamais de désactivation) plus un
+// bouton "Plus tard" qui la masque pour le reste de la visite (state.pushReminderDismissed) —
+// elle réapparaît naturellement à la prochaine visite tant que l'abonnement n'est pas fait,
+// puisque cet état repart à false à chaque rechargement complet de la page.
+function pushReminderBannerHtml() {
+  if (state.pushSubscribed || state.pushReminderDismissed) return '';
+  return `
+    <div class="card" id="push-reminder-banner" style="display:flex; justify-content:space-between; align-items:center; gap:10px; flex-wrap:wrap; padding:12px 14px;">
+      <p style="margin:0; font-size:13px; flex:1; min-width:180px;">🔔 Activez les notifications pour être prévenu·e dès qu'une action importante vous concerne (retrait, dépôt, mot de passe...).</p>
+      <div style="display:flex; gap:8px; flex-shrink:0;">
+        <button type="button" id="push-reminder-activate-btn" class="tile" style="font-size:12px; padding:8px 10px; background:rgba(34,197,94,0.2);">Activer</button>
+        <button type="button" id="push-reminder-dismiss-btn" class="tile" style="font-size:12px; padding:8px 10px;">Plus tard</button>
+      </div>
+    </div>
+  `;
+}
+
+// Utilise directement subscribeToPush() de push-client.js (plutôt que
+// bindAppNotificationsToggleEvents ci-dessus, qui gère aussi le chemin "désabonnement" —
+// jamais pertinent ici puisque la bannière n'apparaît que si non abonné) pour éviter tout
+// conflit d'id avec un éventuel bouton #notifications-toggle-btn présent ailleurs sur le
+// même écran (aucun cas actuel, mais les deux composants restent indépendants par prudence).
+function bindPushReminderBannerEvents() {
+  const activateBtn = document.getElementById('push-reminder-activate-btn');
+  if (activateBtn) {
+    activateBtn.addEventListener('click', async () => {
+      activateBtn.disabled = true;
+      const result = await subscribeToPush(api);
+      activateBtn.disabled = false;
+      if (result.status === 'subscribed') { setState({ pushSubscribed: true, error: '', success: 'Notifications activées sur cet appareil.' }); return; }
+      if (result.status === 'unsupported') { setState({ error: "Ce navigateur/appareil ne prend pas en charge les notifications (sur iPhone, l'app doit d'abord être ajoutée à l'écran d'accueil)." }); return; }
+      if (result.status === 'denied') { setState({ error: "Permission refusée — activez les notifications pour ce site dans les réglages de votre navigateur, puis réessayez." }); return; }
+      if (result.status === 'dismissed') return; // fenêtre système fermée sans choix — pas d'erreur à afficher
+      setState({ error: result.error || "Erreur inconnue lors de l'activation des notifications." });
+    });
+  }
+  const dismissBtn = document.getElementById('push-reminder-dismiss-btn');
+  if (dismissBtn) {
+    dismissBtn.addEventListener('click', () => setState({ pushReminderDismissed: true }));
+  }
 }
 
 // Champs NatCash/MonCash + plan de remboursement (juillet 2026) — communs aux deux
@@ -468,7 +518,13 @@ const state = {
   // choisir le libellé du bouton "🔔 Activer"/"🔕 Désactiver" dans Profil/Espace Agent ; ne
   // reflète jamais un état "par compte" (le serveur ne sait que quels endpoints précis sont
   // enregistrés, jamais si CET appareil-ci en fait partie avant qu'on ne le lui demande).
-  pushSubscribed: false
+  pushSubscribed: false,
+  // Rappel discret répété (juillet 2026, voir pushReminderBannerHtml()) — masque la bannière
+  // de rappel pour le reste de la visite en cours quand on clique "Plus tard". Remis à false
+  // à chaque rechargement complet de la page (valeur initiale de state, jamais persistée en
+  // storage) — c'est ce qui fait que le rappel est "répété" d'une visite à l'autre tant que
+  // l'abonnement n'est pas fait, sans jamais être insistant au sein d'une même visite.
+  pushReminderDismissed: false
 };
 
 function setState(patch) {
@@ -1078,6 +1134,7 @@ function renderHome() {
   return `
     ${state.success ? `<div class="success-banner">${state.success}</div>` : ''}
     ${state.error ? `<div class="error-banner">${state.error}</div>` : ''}
+    ${pushReminderBannerHtml()}
     <div class="card">
       <h2>Bonjour ${escapeHtml(state.user?.name ?? '')} 👋</h2>
       <p>Jouez chaque jour pour gagner des points, grimper au classement et les retirer en espèces chez l'un de nos Agents sur tout le territoire national.</p>
@@ -1136,6 +1193,8 @@ function renderHome() {
 }
 
 function bindHomeEvents() {
+  bindPushReminderBannerEvents();
+
   document.querySelectorAll('[data-start]').forEach(btn => {
     btn.addEventListener('click', () => {
       pendingGameType = btn.dataset.start;
@@ -2429,6 +2488,7 @@ function agentDashboardHtml(dash, commission) {
   return `
     ${state.error ? `<div class="error-banner">${escapeHtml(state.error)}</div>` : ''}
     ${state.success ? `<div class="success-banner">${escapeHtml(state.success)}</div>` : ''}
+    ${pushReminderBannerHtml()}
     <div class="card">
       <h2>🧑‍💼 ${escapeHtml(dash.firstName)} ${escapeHtml(dash.lastName)}</h2>
       <div class="stat-row"><span>Code Agent</span><span><strong>${escapeHtml(dash.fullCode || dash.agentCode)}</strong></span></div>
@@ -2520,6 +2580,10 @@ function refillStatusLabel(status) {
 
 function bindAgentEvents() {
   bindAppNotificationsToggleEvents();
+  // Sans effet sur agentPendingHtml()/agentRejectedHtml() (la bannière n'existe que dans
+  // agentDashboardHtml) — getElementById renvoie simplement null et les deux handlers ne
+  // sont jamais attachés, sans erreur.
+  bindPushReminderBannerEvents();
   const form = document.getElementById('agent-apply-form');
   if (form) {
     form.addEventListener('submit', async (e) => {
