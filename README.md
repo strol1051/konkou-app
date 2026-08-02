@@ -724,6 +724,12 @@ Corrigé côté `renderAwaitingConfirm()` (`frontend/app.js`) : texte neutre "Au
 
 Corrigé à deux niveaux : `Cache-Control: no-cache` (force une revalidation avec le serveur à chaque requête, jamais un contenu volontairement périmé) ajouté à toutes les réponses de `serveStatic()` ; et `CACHE_NAME` de `sw.js` passé à `konkou-shell-v3`, ce qui vide immédiatement l'ancien cache du service worker à sa prochaine activation plutôt que d'attendre une nouvelle visite en ligne pour le repeupler naturellement. **Un appareil qui a déjà visité l'app avant ce correctif peut avoir besoin d'un rechargement forcé une seule fois** (fermer complètement l'onglet/l'app et la rouvrir, ou vider les données du site) pour recevoir cette toute première mise à jour — les déploiements suivants n'en auront plus besoin.
 
+**Sondage automatique pour "Nous contacter" (juillet 2026).** Jusqu'ici, seul l'écran de confirmation (inscription/réinitialisation) recevait les réponses de l'admin en direct — "Nous contacter" demandait de cliquer sur "🔄 Actualiser" pour les voir, jugé trop peu automatique pour un vrai aller-retour de conversation.
+
+- **`frontend/app.js`** : `startChatPolling()` (déjà utilisée par l'écran de confirmation) est généralisée pour accepter n'importe quelle source de messages plutôt qu'un triplet `(phone, purpose, secret)` figé — `awaitingChatMessages()` reprend exactement l'ancien comportement pour la confirmation, et une nouvelle `contactChatMessages()` sert "Nous contacter" (authentifiée via `/api/chat/messages` pour un joueur/agent connecté, anonyme via `/api/chat/anonymous/messages` sinon), toutes deux renvoyant `null` pour arrêter proprement le sondage dès que l'écran concerné (`isOnContactScreen()`, qui couvre les trois contextes possibles : avant connexion, Profil joueur, Espace Agent) n'est plus affiché.
+- Le bouton "🔄 Actualiser" est retiré ; le sondage démarre automatiquement à l'ouverture de l'écran (bouton "📞 Nous contacter"/"📞 Contact") ou dès l'envoi du premier message, et s'arrête au clic sur "Retour" ou en quittant l'écran par un autre chemin (barre d'onglets, fermeture de l'Espace Agent contact) — au pire avec un tick de retard (3 secondes) grâce à `isOnContactScreen()`.
+- Comme pour l'écran de confirmation, aucun affichage optimiste du message qu'on vient d'envoyer (qui créerait un doublon une fois le vrai message récupéré par le sondage) : le premier message envoyé démarre le sondage avec une conversation vide, immédiatement remplie par le premier tick.
+
 ## Structure du projet
 
 ```

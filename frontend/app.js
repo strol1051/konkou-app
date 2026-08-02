@@ -529,7 +529,7 @@ const state = {
   // conversation anonyme n'a encore été démarrée (avant connexion). { phone, secret,
   // messages } une fois le premier message envoyé. Sans objet pour un utilisateur déjà
   // connecté (state.token) : dans ce cas /api/chat/... identifie la conversation via le
-  // jeton de session, pas via ce state — voir renderContactForm()/loadContactMessages().
+  // jeton de session, pas via ce state — voir renderContactForm()/contactChatMessages().
   contactChat: null,
   // Numéro affiché en complément du tchat sur l'écran "Nous contacter" (voir
   // contactRoutes.getPublicContactNumber) — "garder un numéro de contact sur le site" même
@@ -605,28 +605,41 @@ function stopChatPolling() {
   chatTick = null;
 }
 
-// `getParams` est ré-appelée à CHAQUE tick (jamais figée une seule fois à l'appel) pour
-// toujours interroger le bon triplet même si l'utilisateur relance une demande (nouveau
-// code, voir resendCode()) pendant que le tchat est ouvert, et pour s'arrêter proprement
-// (en renvoyant null) dès que l'écran concerné n'est plus affiché.
-function startChatPolling(getParams) {
+// `fetchMessages` est une fonction async ré-appelée à CHAQUE tick (jamais figée une seule
+// fois à l'appel) — elle doit renvoyer soit un tableau de messages, soit `null` pour
+// signaler que l'écran concerné n'est plus affiché (ce qui arrête proprement le sondage).
+// Généralisé (juillet 2026) pour servir aussi bien la conversation anonyme de confirmation
+// (voir awaitingChatMessages() ci-dessous) que celle de "Nous contacter" (anonyme OU
+// authentifiée selon state.token, voir contactChatMessages()/startContactChatPolling()) —
+// un seul mécanisme de sondage/anti-doublon (chatLastMessageId) partagé, puisqu'un seul de
+// ces écrans peut être affiché à la fois.
+function startChatPolling(fetchMessages) {
   stopChatPolling();
   chatLastMessageId = 0;
   chatTick = async () => {
-    const params = getParams();
-    if (!params) return stopChatPolling();
     try {
-      const q = new URLSearchParams({ phone: params.phone, purpose: params.purpose, secret: params.secret || '' });
-      const res = await fetch(`/api/chat/anonymous/messages?${q}`);
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) return;
-      appendNewChatMessages(data.messages || []);
+      const messages = await fetchMessages();
+      if (messages === null) return stopChatPolling();
+      appendNewChatMessages(messages);
     } catch {
       // network hiccup — on retentera au prochain tick
     }
   };
   chatTick();
   chatPollTimer = setInterval(chatTick, 3000);
+}
+
+// Source de messages pour la conversation anonyme de confirmation (inscription/
+// réinitialisation) — voir goAwaitingConfirm() plus bas. Revient à `null` dès que l'écran
+// n'est plus le bon, ou que la demande a expiré/n'est plus valide (state.awaitingStatus).
+async function awaitingChatMessages() {
+  if (state.authMode !== 'awaiting-confirm' || !state.awaiting) return null;
+  if (state.awaitingStatus === 'expired' || state.awaitingStatus === 'invalid') return null;
+  const { phone, purpose, code } = state.awaiting;
+  const q = new URLSearchParams({ phone, purpose, secret: code || '' });
+  const res = await fetch(`/api/chat/anonymous/messages?${q}`);
+  const data = await res.json().catch(() => ({}));
+  return res.ok ? (data.messages || []) : [];
 }
 
 // Ajoute directement les nouveaux messages (ceux dont l'id dépasse le dernier connu) au
@@ -925,10 +938,10 @@ function renderContactForm() {
         </form>
       ` : `
         <p style="font-size:13px;">Un administrateur vous répond ici même.</p>
-        <div class="chat-thread">
+        <div id="chat-thread" class="chat-thread">
           ${(chat?.messages || []).length === 0 ? `<p class="chat-empty">Aucun message pour l'instant.</p>` : (chat.messages || []).map(chatBubbleHtml).join('')}
         </div>
-        <button class="link-btn" type="button" id="contact-refresh-btn" style="margin-bottom:10px;">🔄 Actualiser</button>
+        <p style="font-size:12px; color:var(--muted); margin:0 0 4px;">✍️ Écrire un message :</p>
         <form id="chat-send-form" class="chat-send-form">
           <textarea name="body" placeholder="Votre message..." maxlength="1000" rows="2" required></textarea>
           <button class="primary" type="submit">Envoyer</button>
@@ -950,33 +963,43 @@ async function loadContactNumber() {
   }
 }
 
-// Recharge les messages de la conversation active — authentifiée (jeton de session, voir
-// /api/chat/messages) ou anonyme (phone+secret conservés dans state.contactChat, voir
-// /api/chat/anonymous/messages). Contrairement au tchat de confirmation
-// (renderAwaitingConfirm), pas de sondage automatique ici : le bouton "🔄 Actualiser"
-// suffit pour un formulaire de contact, moins urgent qu'une confirmation d'inscription.
-async function loadContactMessages() {
-  try {
-    let messages;
-    if (state.token) {
-      const data = await api('/chat/messages');
-      messages = data.messages;
-    } else if (state.contactChat) {
-      const q = new URLSearchParams({ phone: state.contactChat.phone, purpose: 'support', secret: state.contactChat.secret });
-      const res = await fetch(`/api/chat/anonymous/messages?${q}`);
-      const data = await res.json().catch(() => ({}));
-      messages = data.messages || [];
-    } else {
-      return;
-    }
-    setState({ contactChat: { ...(state.contactChat || {}), messages } });
-  } catch (err) {
-    setState({ error: err.message });
+// Vrai tant que l'écran "Nous contacter" est effectivement affiché, quel que soit le
+// contexte (avant connexion, Profil joueur, Espace Agent — voir renderContactForm()) —
+// relu à chaque tick de sondage (voir contactChatMessages() ci-dessous) pour arrêter
+// proprement le sondage dès qu'on quitte cet écran, y compris par la barre d'onglets
+// plutôt que par le bouton "Retour" (voir bindContactEvents()).
+function isOnContactScreen() {
+  if (state.isAgent) return state.agentScreen === 'contact';
+  if (state.token) return state.view === 'contact';
+  return state.authMode === 'contact';
+}
+
+// Source de messages pour startChatPolling() côté "Nous contacter" (juillet 2026,
+// remplace le bouton "🔄 Actualiser" manuel par un sondage automatique, comme l'écran de
+// confirmation) — authentifiée (jeton de session, voir /api/chat/messages) ou anonyme
+// (phone+secret conservés dans state.contactChat, voir /api/chat/anonymous/messages).
+async function contactChatMessages() {
+  if (!isOnContactScreen()) return null;
+  if (state.token) {
+    const data = await api('/chat/messages');
+    return data.messages || [];
   }
+  if (!state.contactChat) return null;
+  const q = new URLSearchParams({ phone: state.contactChat.phone, purpose: 'support', secret: state.contactChat.secret });
+  const res = await fetch(`/api/chat/anonymous/messages?${q}`);
+  const data = await res.json().catch(() => ({}));
+  return res.ok ? (data.messages || []) : [];
+}
+
+function startContactChatPolling() {
+  startChatPolling(contactChatMessages);
 }
 
 function bindContactEvents(onBack) {
-  document.getElementById('contact-back').addEventListener('click', onBack);
+  document.getElementById('contact-back').addEventListener('click', () => {
+    stopChatPolling();
+    onBack();
+  });
 
   if (!state.contactPhoneNumber) loadContactNumber();
 
@@ -993,18 +1016,17 @@ function bindContactEvents(onBack) {
         });
         const data = await res.json().catch(() => ({}));
         if (!res.ok) throw new Error(data.error || 'Erreur inconnue');
-        setState({
-          contactChat: { phone: fd.whatsapp, secret: data.secret, messages: [{ id: 0, sender: 'user', body: fd.message }] },
-          error: '', success: ''
-        });
+        // messages: [] plutôt qu'un affichage optimiste du message qu'on vient d'envoyer —
+        // startContactChatPolling() ci-dessous va aussitôt le récupérer avec son vrai id
+        // depuis le serveur, un affichage optimiste créerait un doublon (même principe que
+        // renderAwaitingConfirm(), qui ne fait jamais d'affichage optimiste non plus).
+        setState({ contactChat: { phone: fd.whatsapp, secret: data.secret, messages: [] }, error: '', success: '' });
+        startContactChatPolling();
       } catch (err) {
         setState({ error: err.message });
       }
     });
   }
-
-  const refreshBtn = document.getElementById('contact-refresh-btn');
-  if (refreshBtn) refreshBtn.addEventListener('click', loadContactMessages);
 
   const sendForm = document.getElementById('chat-send-form');
   if (sendForm) {
@@ -1024,7 +1046,10 @@ function bindContactEvents(onBack) {
           if (!res.ok) throw new Error(data.error || 'Erreur inconnue');
         }
         e.target.reset();
-        await loadContactMessages();
+        // Redéclenche immédiatement un sondage plutôt que d'attendre le prochain tick —
+        // même principe que bindAwaitingConfirmEvents(), sans risque de doublon puisque
+        // appendNewChatMessages() ignore tout message déjà connu.
+        if (chatTick) chatTick();
       } catch (err) {
         setState({ error: err.message });
       }
@@ -1153,7 +1178,7 @@ function bindAuthEvents() {
     // Reprend une conversation déjà démarrée plus tôt dans cette même visite (voir
     // state.contactChat) — sans effet si aucune conversation n'a encore été ouverte, le
     // formulaire de démarrage s'affiche alors normalement (voir renderContactForm()).
-    if (state.contactChat) loadContactMessages();
+    if (state.contactChat) startContactChatPolling();
   });
   document.getElementById('agent-register-link').addEventListener('click', () => {
     setState({ authMode: 'agent-register', error: '', success: '' });
@@ -1197,11 +1222,7 @@ function goAwaitingConfirm(data) {
   // Le code (state.awaiting.code) sert AUSSI de secret pour le tchat — voir
   // checkAnonymousAccess() dans routes/chat.js : même triplet (phone, purpose, code) déjà
   // utilisé par /auth/verify-status, aucun secret séparé à transporter.
-  startChatPolling(() => {
-    if (state.authMode !== 'awaiting-confirm' || !state.awaiting) return null;
-    if (state.awaitingStatus === 'expired' || state.awaitingStatus === 'invalid') return null;
-    return { phone: state.awaiting.phone, purpose: state.awaiting.purpose, secret: state.awaiting.code };
-  });
+  startChatPolling(awaitingChatMessages);
 }
 
 async function resendCode(purpose, phone) {
@@ -2484,7 +2505,7 @@ function bindProfileEvents() {
   const contactBtn = document.getElementById('contact-btn');
   if (contactBtn) contactBtn.addEventListener('click', () => {
     setState({ view: 'contact', error: '', success: '' });
-    loadContactMessages();
+    startContactChatPolling();
   });
   const btn = document.getElementById('logout-btn');
   if (btn) btn.addEventListener('click', logout);
@@ -2567,8 +2588,9 @@ function bindAgentShellEvents() {
   document.getElementById('agent-logout-btn').addEventListener('click', logout);
   document.getElementById('agent-contact-btn').addEventListener('click', () => {
     const opening = state.agentScreen !== 'contact';
+    if (!opening) stopChatPolling();
     setState({ agentScreen: opening ? 'contact' : 'main', error: '', success: '' });
-    if (opening) loadContactMessages();
+    if (opening) startContactChatPolling();
   });
 
   const content = document.getElementById('agent-shell-content');
