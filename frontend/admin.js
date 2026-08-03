@@ -318,23 +318,17 @@ function resizeImageForLogo(file, maxDim = 1000) {
 
 const state = {
   token: localStorage.getItem('konkou_admin_token') || null,
-  section: 'cashouts', // cashouts | verifications | deposits | agents | refills | revenue
+  section: 'cashouts', // cashouts | deposits | agents | refills | revenue
   statusFilter: 'pending',
-  verifyPurpose: 'verify_phone', // verify_phone | reset_password
   cashouts: [],
-  verifications: [],
-  // Conversations du tchat interne (juillet 2026, voir routes/chat.js) associées à chaque
-  // demande de l'onglet Vérifications, indexées par numéro de téléphone — chargées en
-  // parallèle par loadVerificationChats() juste après loadVerifications(), affichées
-  // directement dans chaque carte (voir renderVerificationsSection()) pour comparer le
-  // code indiqué par la personne avec celui affiché juste au-dessus, sans changer d'onglet.
-  verificationChats: {},
-  // Onglet "Messages" (juillet 2026) — conversations purpose='support' (ex-formulaire
-  // "Nous contacter" + support en continu pour un joueur/agent connecté), distinctes des
-  // conversations verify_phone/reset_password gérées directement dans l'onglet
-  // Vérifications ci-dessus. messageThreads = liste groupée (voir listChatThreads dans
-  // routes/chat.js) ; openMessageThread = numéro de la conversation actuellement ouverte
-  // (null = liste) ; messageThreadMessages = messages de cette conversation ouverte.
+  // Onglet "Messages" (juillet 2026, voir routes/chat.js) — conversations purpose='support'
+  // (ex-formulaire "Nous contacter" + support en continu pour un joueur/agent connecté).
+  // La confirmation d'inscription/réinitialisation (ex-onglet "Vérifications") a été
+  // retirée en août 2026 : elle se fait désormais directement dans l'app, sans admin (voir
+  // otp.js et confirmVerifyPhone()/confirmResetPassword() dans routes/auth.js).
+  // messageThreads = liste groupée (voir listChatThreads dans routes/chat.js) ;
+  // openMessageThread = numéro de la conversation actuellement ouverte (null = liste) ;
+  // messageThreadMessages = messages de cette conversation ouverte.
   messageThreads: [],
   openMessageThread: null,
   messageThreadMessages: [],
@@ -397,7 +391,7 @@ async function api(path, { method = 'GET', body } = {}) {
 
 function logout() {
   localStorage.removeItem('konkou_admin_token');
-  setState({ token: null, cashouts: [], verifications: [], verificationChats: {}, messageThreads: [], openMessageThread: null, messageThreadMessages: [], deposits: [], agents: [], refills: [], vip: [], revenue: null, players: [], playersSearch: '', accountLookup: null, agentsReimbursements: null, agentsReimbursementsHistory: [], error: '', success: '' });
+  setState({ token: null, cashouts: [], messageThreads: [], openMessageThread: null, messageThreadMessages: [], deposits: [], agents: [], refills: [], vip: [], revenue: null, players: [], playersSearch: '', accountLookup: null, agentsReimbursements: null, agentsReimbursementsHistory: [], error: '', success: '' });
 }
 
 function render() {
@@ -410,7 +404,7 @@ function renderLogin() {
     <div class="auth-screen">
       <div class="auth-logo">
         <img src="${logoUrl}" alt="Konkou" class="auth-logo-img">
-        <div class="tagline">Gestion agent/gestionnaire — retraits, vérifications, dépôts</div>
+        <div class="tagline">Gestion agent/gestionnaire — retraits, messages, dépôts</div>
       </div>
       ${state.error ? `<div class="error-banner">${escapeHtml(state.error)}</div>` : ''}
       <div class="card">
@@ -425,7 +419,7 @@ function renderLogin() {
 }
 
 function renderDashboard() {
-  const sections = [['cashouts', '💸 Retraits'], ['verifications', '💬 Vérifications'], ['messages', '📨 Messages'], ['deposits', '🎟️ Dépôts'], ['vip', '👑 VIP'], ['agents', '🧑‍💼 Agents'], ['refills', '💳 Renflouements'], ['revenue', '📊 Revenus'], ['players', '👥 Joueurs'], ['accounts', '🗑️ Comptes'], ['settings', '⚙️ Réglages']];
+  const sections = [['cashouts', '💸 Retraits'], ['messages', '📨 Messages'], ['deposits', '🎟️ Dépôts'], ['vip', '👑 VIP'], ['agents', '🧑‍💼 Agents'], ['refills', '💳 Renflouements'], ['revenue', '📊 Revenus'], ['players', '👥 Joueurs'], ['accounts', '🗑️ Comptes'], ['settings', '⚙️ Réglages']];
   return `
     <div class="topbar">
       <img src="${logoUrl}" alt="Konkou" class="topbar-logo">
@@ -448,7 +442,6 @@ function renderDashboard() {
 function renderSectionBody() {
   if (state.loading) return '<div class="center-msg">Chargement...</div>';
   if (state.section === 'cashouts') return renderCashoutsSection();
-  if (state.section === 'verifications') return renderVerificationsSection();
   if (state.section === 'messages') return renderMessagesSection();
   if (state.section === 'deposits') return renderDepositsSection();
   if (state.section === 'vip') return renderVipSection();
@@ -492,43 +485,13 @@ function statusLabel(status) {
   return map[status] || status;
 }
 
-// ---------- Vérifications (WhatsApp) ----------
-function renderVerificationsSection() {
-  const purposes = [['verify_phone', 'Inscriptions'], ['reset_password', 'Réinitialisations']];
-  return `
-    <div class="grid-2" style="margin-top:14px;">
-      ${purposes.map(([key, label]) => `
-        <button class="tile" data-verify-purpose="${key}" style="${state.verifyPurpose === key ? 'outline:2px solid var(--green);' : ''}">${label}</button>
-      `).join('')}
-    </div>
-    <p style="color:var(--muted); font-size:13px; padding:6px 4px;">
-      Demandez à la personne son code dans la conversation ci-dessous et comparez-le avec celui affiché avant de confirmer.
-    </p>
-    ${state.verifications.length === 0 ? `<div class="card"><p>Aucune demande en attente.</p></div>` : state.verifications.map(v => `
-      <div class="card">
-        <h2>${escapeHtml(v.phone)}</h2>
-        <p style="font-size:28px; font-weight:800; letter-spacing:4px; text-align:center;">${escapeHtml(v.code)}</p>
-        <p style="font-size:12px;">Demandé le ${escapeHtml(v.requestedAt)} · Expire le ${escapeHtml(v.expiresAt)}</p>
-        <div class="chat-thread">
-          ${(state.verificationChats[v.phone] || []).length === 0 ? `<p class="chat-empty">Aucun message pour l'instant.</p>` : (state.verificationChats[v.phone] || []).map(chatBubbleHtml).join('')}
-        </div>
-        <form class="chat-send-form" data-verify-reply-form="${escapeHtml(v.phone)}">
-          <textarea placeholder="Répondre..." maxlength="1000" rows="2" required></textarea>
-          <button class="primary" type="submit">Envoyer</button>
-        </form>
-        <input type="text" inputmode="numeric" maxlength="6" placeholder="Recopiez le code indiqué par la personne" data-verify-code-input="${escapeHtml(v.phone)}" style="text-align:center; letter-spacing:2px; font-weight:700; margin-top:10px;" />
-        <button class="tile" data-confirm-verify="${escapeHtml(v.phone)}" style="background:rgba(37,211,102,0.2); width:100%; margin-bottom:8px;">✅ Confirmer</button>
-        <button class="tile" data-reject-verify="${escapeHtml(v.phone)}" style="background:rgba(210,16,52,0.2); width:100%;">❌ Refuser</button>
-      </div>
-    `).join('')}
-  `;
-}
-
 // ---------- Messages ("Nous contacter" + support en continu, voir routes/chat.js) ----------
-// Distinct de l'onglet Vérifications ci-dessus : purpose='support' uniquement (formulaire
-// "Nous contacter" avant connexion, ou message d'un joueur/agent déjà connecté) — les
-// conversations verify_phone/reset_password restent gérées directement dans Vérifications,
-// à côté du code de référence, plutôt que dupliquées ici.
+// L'ancien onglet "Vérifications" (confirmation WhatsApp puis tchat des inscriptions/
+// réinitialisations) a été retiré en août 2026 : cette confirmation se fait désormais
+// directement dans l'app, sans admin (voir le commentaire en tête de otp.js et
+// confirmVerifyPhone()/confirmResetPassword() dans routes/auth.js). Cet onglet ne gère plus
+// que purpose='support' (formulaire "Nous contacter" avant connexion, ou message d'un
+// joueur/agent déjà connecté).
 function renderMessagesSection() {
   if (state.openMessageThread) {
     const phone = state.openMessageThread;
@@ -975,7 +938,7 @@ function renderSettingsSection() {
     </div>
     <div class="card">
       <h2>🔔 Notifications</h2>
-      <p style="font-size:13px;">Activez les notifications push sur CET appareil/navigateur pour être prévenu·e directement, même l'admin fermé, dès qu'une nouvelle inscription ou une demande de réinitialisation de mot de passe attend une confirmation dans "Vérifications". Nécessite les clés VAPID configurées côté serveur (voir README.md, section "Notifications push") — sans elles, le bouton ci-dessous affichera une erreur explicite.</p>
+      <p style="font-size:13px;">Activez les notifications push sur CET appareil/navigateur pour être prévenu·e directement, même l'admin fermé, dès qu'un nouveau message arrive dans "Messages" ou qu'une demande de renflouement agent attend une décision. Nécessite les clés VAPID configurées côté serveur (voir README.md, section "Notifications push") — sans elles, le bouton ci-dessous affichera une erreur explicite.</p>
       ${notificationsToggleHtml(state.pushSubscribed, "Vous recevrez un signal sur cet appareil dès qu'une action attend votre confirmation — même la fenêtre admin fermée.")}
     </div>
     ${renderBroadcastSection()}
@@ -1090,40 +1053,6 @@ async function loadCashouts() {
     if (err.status === 401) { logout(); return; }
     setState({ error: err.message, loading: false });
   }
-}
-
-async function loadVerifications() {
-  setState({ loading: true, error: '' });
-  try {
-    const data = await api(`/admin/verifications?purpose=${state.verifyPurpose}`);
-    setState({ verifications: data.requests, loading: false });
-    loadVerificationChats(data.requests);
-  } catch (err) {
-    if (err.status === 401) { logout(); return; }
-    setState({ error: err.message, loading: false });
-  }
-}
-
-// Charge en parallèle la conversation de chaque demande en attente (voir "Tchat interne",
-// juillet 2026, routes/chat.js) — remplace le message WhatsApp que l'opérateur devait
-// auparavant recevoir/cross-vérifier manuellement : la personne indique désormais son code
-// directement dans cette conversation, affichée dans chaque carte à côté du code de
-// référence pour comparaison immédiate (voir renderVerificationsSection()). Volontairement
-// séparé de loadVerifications() ci-dessus (n'affecte pas state.loading) : la liste
-// s'affiche sans attendre que toutes les conversations aient fini de charger, chacune
-// apparaît dès qu'elle est prête.
-async function loadVerificationChats(requests) {
-  const purpose = state.verifyPurpose;
-  const chats = { ...state.verificationChats };
-  await Promise.all((requests || []).map(async (v) => {
-    try {
-      const data = await api(`/admin/chat/messages?phone=${encodeURIComponent(v.phone)}&purpose=${purpose}`);
-      chats[v.phone] = data.messages;
-    } catch {
-      // pas grave — on retentera au prochain chargement de l'onglet
-    }
-  }));
-  setState({ verificationChats: chats });
 }
 
 async function loadDeposits() {
@@ -1286,7 +1215,6 @@ async function openMessageThread(phone) {
 
 function loadSection() {
   if (state.section === 'cashouts') return loadCashouts();
-  if (state.section === 'verifications') return loadVerifications();
   if (state.section === 'messages') return loadMessageThreads();
   if (state.section === 'deposits') return loadDeposits();
   if (state.section === 'vip') return loadVipPurchases();
@@ -1334,34 +1262,6 @@ function bind() {
   });
   document.querySelectorAll('[data-reject]').forEach(btn => {
     btn.addEventListener('click', () => actOnCashout(btn.dataset.reject, 'reject'));
-  });
-
-  document.querySelectorAll('[data-verify-purpose]').forEach(btn => {
-    btn.addEventListener('click', () => { state.verifyPurpose = btn.dataset.verifyPurpose; loadVerifications(); });
-  });
-  document.querySelectorAll('[data-confirm-verify]').forEach(btn => {
-    btn.addEventListener('click', () => {
-      const phone = btn.dataset.confirmVerify;
-      const input = document.querySelector(`[data-verify-code-input="${CSS.escape(phone)}"]`);
-      confirmVerification(phone, input ? input.value : '');
-    });
-  });
-  document.querySelectorAll('[data-reject-verify]').forEach(btn => {
-    btn.addEventListener('click', () => rejectVerification(btn.dataset.rejectVerify));
-  });
-  document.querySelectorAll('[data-verify-reply-form]').forEach(form => {
-    form.addEventListener('submit', async (e) => {
-      e.preventDefault();
-      const phone = form.dataset.verifyReplyForm;
-      const textarea = form.querySelector('textarea');
-      try {
-        await api('/admin/chat/reply', { method: 'POST', body: { phone, purpose: state.verifyPurpose, body: textarea.value } });
-        textarea.value = '';
-        loadVerificationChats(state.verifications);
-      } catch (err) {
-        setState({ error: err.message });
-      }
-    });
   });
 
   document.querySelectorAll('[data-open-message-thread]').forEach(card => {
@@ -1839,45 +1739,6 @@ async function actOnCashout(id, action) {
     const data = await api(`/admin/cashouts/${action}`, { method: 'POST', body: { id: Number(id) } });
     setState({ success: data.message, error: '' });
     loadCashouts();
-  } catch (err) {
-    setState({ error: err.message });
-  }
-}
-
-async function confirmVerification(phone, code) {
-  const trimmedCode = String(code || '').trim();
-  if (!trimmedCode) {
-    setState({ error: 'Recopiez le code reçu sur WhatsApp dans le champ prévu avant de confirmer.' });
-    return;
-  }
-  if (!confirm(`Confirmer que le code ${trimmedCode} correspond bien au message WhatsApp reçu de ${phone} ?`)) return;
-  try {
-    const path = state.verifyPurpose === 'verify_phone' ? '/admin/verifications/confirm-phone' : '/admin/verifications/confirm-reset';
-    const data = await api(path, { method: 'POST', body: { phone, code: trimmedCode } });
-    setState({ success: data.message, error: '' });
-    // Pour une réinitialisation de mot de passe (depuis la refonte de juillet 2026), la
-    // confirmation n'applique plus rien elle-même — elle AUTORISE seulement la demande
-    // (voir confirmPasswordReset dans routes/admin.js). C'est à l'opérateur de prévenir la
-    // personne pour qu'elle revienne choisir son nouveau mot de passe dans l'app ; comme
-    // Konkou n'a pas d'API WhatsApp Business, on ouvre directement le lien wa.me pré-rempli
-    // renvoyé par le serveur (même mécanique que renderContactForm côté joueur) plutôt que
-    // de forcer l'opérateur à recopier un numéro et un message à la main.
-    if (data.whatsappReplyLink) {
-      window.open(data.whatsappReplyLink, '_blank');
-    }
-    loadVerifications();
-  } catch (err) {
-    setState({ error: err.message });
-  }
-}
-
-async function rejectVerification(phone) {
-  if (!confirm(`Refuser cette demande de ${phone} (aucun message WhatsApp reçu ou code ne correspondant pas) ?`)) return;
-  try {
-    const path = state.verifyPurpose === 'verify_phone' ? '/admin/verifications/reject-phone' : '/admin/verifications/reject-reset';
-    const data = await api(path, { method: 'POST', body: { phone } });
-    setState({ success: data.message, error: '' });
-    loadVerifications();
   } catch (err) {
     setState({ error: err.message });
   }

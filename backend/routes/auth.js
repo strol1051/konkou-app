@@ -1,7 +1,7 @@
 import crypto from 'node:crypto';
 import db from '../db.js';
 import { hashPassword, verifyPassword, signToken, PASSWORD_RE, PASSWORD_REQUIREMENTS_MESSAGE, calcAge } from '../utils.js';
-import { issueOtp, checkOtpStatus, consumeConfirmedOtp } from '../otp.js';
+import { issueOtp, consumeOtp, consumeConfirmedOtp } from '../otp.js';
 import { notifyAdmins } from './push.js';
 
 // Envoie une notification push à tous les admins abonnés, sans jamais faire échouer ni
@@ -111,17 +111,17 @@ export async function register(body) {
     }
   }
 
-  const otp = await issueOtp(phone, 'verify_phone', 'Confirmez la création de mon compte Konkou.');
+  const otp = await issueOtp(phone, 'verify_phone');
   if (!otp.ok) {
     return { status: 429, data: { error: otp.error } };
   }
 
-  notifyAdminsSilently({ title: 'Konkou — Nouvelle inscription', body: `${name} (${phone}) attend une confirmation.`, url: '/admin.html' });
+  notifyAdminsSilently({ title: 'Konkou — Nouvelle inscription', body: `${name} (${phone}) vient de s'inscrire.`, url: '/admin.html' });
 
-  // No auth token yet — the account exists but isn't usable until an admin confirms the
-  // request via the in-app chat (voir routes/chat.js, juillet 2026 — remplace la
-  // confirmation par WhatsApp). `code` sert de secret pour ce tchat ET pour
-  // /auth/verify-status ; le frontend le garde pour les deux usages.
+  // No auth token yet — the account exists but isn't usable until the code is confirmed.
+  // Depuis août 2026 (voir le commentaire en tête de otp.js), cette confirmation se fait
+  // directement dans l'app — pas d'intervention admin — via confirmVerifyPhone() ci-dessous,
+  // appelée dès que la personne retape le code affiché à l'écran.
   return {
     status: 200,
     data: {
@@ -129,8 +129,7 @@ export async function register(body) {
       phone,
       purpose: 'verify_phone',
       code: otp.code,
-      whatsappLink: otp.whatsappLink,
-      message: 'Compte créé — confirmez votre identité via la conversation intégrée pour l’activer.'
+      message: 'Compte créé — entrez le code ci-dessous pour l’activer.'
     }
   };
 }
@@ -167,26 +166,24 @@ export async function resendOtp(body) {
   // de mot de passe (voir forgotPassword ci-dessous) — il n'y a donc plus de payload à
   // préserver d'une demande à l'autre, contrairement à l'ancien comportement. Un simple
   // nouvel OTP "vide" suffit dans les deux cas (inscription comme réinitialisation).
-  const message = purpose === 'verify_phone'
-    ? 'Confirmez la création de mon compte Konkou.'
-    : 'Confirmez ma demande de réinitialisation de mot de passe Konkou.';
-  const otp = await issueOtp(phone, purpose, message);
+  const otp = await issueOtp(phone, purpose);
   if (!otp.ok) return { status: 429, data: { error: otp.error } };
 
-  return { status: 200, data: { message: 'Nouvelle demande envoyée.', code: otp.code, whatsappLink: otp.whatsappLink } };
+  return { status: 200, data: { message: 'Nouveau code envoyé.', code: otp.code } };
 }
 
 // Depuis la refonte de juillet 2026, la réinitialisation de mot de passe suit exactement
 // le même principe que l'inscription (voir register() ci-dessus) : une demande ne fait que
 // DEMANDER une réinitialisation — elle ne contient plus le nouveau mot de passe. Celui-ci
-// n'est saisi que plus tard, une fois qu'un admin a authentifié la demande dans l'onglet
-// "Vérifications" du panneau admin (voir confirmPasswordReset() dans routes/admin.js) et
+// n'est saisi que plus tard, une fois le code confirmé (voir confirmResetPassword()
+// ci-dessous, depuis août 2026 fait automatiquement par le serveur dès que la personne
+// retape son code — plus d'intervention admin, voir le commentaire en tête de otp.js) et
 // que le joueur/agent revient dans l'app pour choisir son nouveau mot de passe (voir
-// completePasswordReset() ci-dessous). Avant cette refonte, le mot de passe était choisi
-// et haché DÈS cette étape-ci, ce qui obligeait l'admin à faire confiance à un mot de passe
-// déjà posé par n'importe qui prétendant être le titulaire du numéro — la nouvelle séquence
-// (demande → autorisation admin → saisie du mot de passe) ferme cette fenêtre en confirmant
-// l'identité AVANT de laisser qui que ce soit poser un nouveau mot de passe.
+// completePasswordReset() ci-dessous). Avant la refonte de juillet 2026, le mot de passe
+// était choisi et haché DÈS cette étape-ci, ce qui obligeait à faire confiance à un mot de
+// passe déjà posé par n'importe qui prétendant être le titulaire du numéro — la séquence
+// (demande → confirmation du code → saisie du mot de passe) ferme cette fenêtre en
+// confirmant le code AVANT de laisser qui que ce soit poser un nouveau mot de passe.
 export async function forgotPassword(body) {
   const { phone } = body || {};
   if (!phone) {
@@ -200,58 +197,60 @@ export async function forgotPassword(body) {
     return { status: 200, data: { message: 'Si ce numéro est enregistré, une demande de réinitialisation a été créée.' } };
   }
 
-  const otp = await issueOtp(phone, 'reset_password', 'Confirmez ma demande de réinitialisation de mot de passe Konkou.');
+  const otp = await issueOtp(phone, 'reset_password');
   if (!otp.ok) return { status: 429, data: { error: otp.error } };
-
-  notifyAdminsSilently({ title: 'Konkou — Réinitialisation demandée', body: `${phone} demande une réinitialisation de mot de passe.`, url: '/admin.html' });
 
   return {
     status: 200,
     data: {
-      message: 'Demande enregistrée — confirmez votre identité via la conversation intégrée pour qu’un administrateur autorise votre demande.',
+      message: 'Demande enregistrée — entrez le code ci-dessous pour continuer.',
       phone,
       purpose: 'reset_password',
-      code: otp.code,
-      whatsappLink: otp.whatsappLink
+      code: otp.code
     }
   };
 }
 
-// Polled by the frontend (no auth — the `code` param is the secret) while it waits for
-// an admin to confirm the WhatsApp message. Pour une inscription (verify_phone), la
-// confirmation active directement le compte et connecte l'utilisateur. Pour une
+// Depuis août 2026, la confirmation se fait directement dans l'app, sans intervention admin
+// (voir le commentaire en tête de otp.js) : la personne retape le code affiché à l'écran, et
+// cette fonction le valide directement via consumeOtp(). Pour une inscription (verify_phone),
+// la confirmation active directement le compte et connecte l'utilisateur. Pour une
 // réinitialisation (reset_password), la confirmation ne fait qu'AUTORISER la demande — il
 // n'y a pas encore de nouveau mot de passe à ce stade, donc pas de session à ouvrir tout de
 // suite (voir completePasswordReset ci-dessous, appelé une fois que le joueur/agent a
-// effectivement choisi son nouveau mot de passe) : le frontend doit basculer vers un
-// formulaire de saisie plutôt que de se connecter immédiatement.
-export function checkVerificationStatus(query) {
-  const { phone, purpose, code } = query || {};
-  if (!phone || !purpose || !code) return { status: 400, data: { error: 'Requête invalide' } };
+// effectivement choisi son nouveau mot de passe).
+export function confirmVerifyPhone(body) {
+  const { phone, code } = body || {};
+  if (!phone || !code) return { status: 400, data: { error: 'Numéro et code requis' } };
 
-  const st = checkOtpStatus(phone, purpose, code);
-  if (st === 'invalid') return { status: 200, data: { status: 'invalid' } };
-  if (st === 'expired') return { status: 200, data: { status: 'expired' } };
-  if (st === 'pending') return { status: 200, data: { status: 'pending' } };
-
-  if (purpose === 'reset_password') {
-    return { status: 200, data: { status: 'confirmed' } };
-  }
+  const result = consumeOtp(phone, 'verify_phone', code);
+  if (!result.ok) return { status: 400, data: { error: result.error } };
 
   const user = db.prepare('SELECT * FROM users WHERE phone = ?').get(phone);
-  if (!user) return { status: 200, data: { status: 'invalid' } };
+  if (!user) return { status: 404, data: { error: 'Compte introuvable' } };
+
+  db.prepare('UPDATE users SET phone_verified = 1 WHERE id = ?').run(user.id);
 
   const token = signToken({ userId: user.id }, process.env.JWT_SECRET);
-  return { status: 200, data: { status: 'confirmed', token, user: publicUser(user) } };
+  return { status: 200, data: { token, user: publicUser(user) } };
 }
 
-// Dernière étape de la réinitialisation : appelée UNIQUEMENT après qu'un admin a autorisé la
-// demande (voir checkVerificationStatus ci-dessus et confirmPasswordReset dans
-// routes/admin.js). Le triplet (phone, purpose, code) déjà détenu par le frontend depuis la
-// demande initiale sert de preuve — exactement comme pour le polling — donc pas besoin d'un
-// jeton d'authentification séparé ici (l'utilisateur n'est justement pas encore connecté).
-// consumeConfirmedOtp() refuse tout appel tant que l'admin n'a pas confirmé, et supprime la
-// ligne après usage pour empêcher un rejeu (voir otp.js pour le détail des deux garanties).
+export function confirmResetPassword(body) {
+  const { phone, code } = body || {};
+  if (!phone || !code) return { status: 400, data: { error: 'Numéro et code requis' } };
+
+  const result = consumeOtp(phone, 'reset_password', code);
+  if (!result.ok) return { status: 400, data: { error: result.error } };
+
+  return { status: 200, data: { message: 'Code confirmé — choisissez votre nouveau mot de passe.' } };
+}
+
+// Dernière étape de la réinitialisation : appelée UNIQUEMENT après que confirmResetPassword()
+// ci-dessus a confirmé le code. Le triplet (phone, purpose, code) déjà détenu par le
+// frontend depuis la demande initiale sert de preuve, donc pas besoin d'un jeton
+// d'authentification séparé ici (l'utilisateur n'est justement pas encore connecté).
+// consumeConfirmedOtp() refuse tout appel tant que le code n'a pas été confirmé, et supprime
+// la ligne après usage pour empêcher un rejeu (voir otp.js pour le détail des deux garanties).
 export async function completePasswordReset(body) {
   const { phone, code, newPassword } = body || {};
   if (!phone || !code || !newPassword) {
@@ -271,8 +270,8 @@ export async function completePasswordReset(body) {
   db.prepare('UPDATE users SET password_hash = ? WHERE id = ?').run(hash, user.id);
 
   // Connecte directement l'utilisateur avec son nouveau mot de passe, comme le fait déjà
-  // checkVerificationStatus pour une inscription confirmée — évite un aller-retour inutile
-  // vers l'écran de connexion juste après avoir choisi le mot de passe.
+  // confirmVerifyPhone() pour une inscription confirmée — évite un aller-retour inutile vers
+  // l'écran de connexion juste après avoir choisi le mot de passe.
   const token = signToken({ userId: user.id }, process.env.JWT_SECRET);
   return { status: 200, data: { message: 'Mot de passe réinitialisé.', token, user: publicUser(user) } };
 }

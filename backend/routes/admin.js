@@ -1,7 +1,6 @@
 import crypto from 'node:crypto';
 import db from '../db.js';
 import { signToken } from '../utils.js';
-import { adminConfirmOtp, listPendingOtps, rejectOtp, buildWhatsappLinkToPhone } from '../otp.js';
 import { getAgentCapitalFeePercent, formatAgentNumber, fullAgentCode, computeReimbursementStatus } from './agents.js';
 import { notifyUser } from './push.js';
 
@@ -85,102 +84,6 @@ export function rejectCashout(body) {
   }).catch(() => {});
 
   return { status: 200, data: { message: 'Retrait rejeté, points remboursés au joueur.' } };
-}
-
-// ---------- Vérifications (WhatsApp) ----------
-// The operator receives a WhatsApp message (phone + code, pre-filled by the app) and
-// cross-checks it here before confirming — this manual check is the actual proof of
-// phone ownership in this design (no automated SMS provider is configured).
-
-export function listVerifications(purposeFilter) {
-  const purpose = purposeFilter === 'reset_password' ? 'reset_password' : 'verify_phone';
-  const rows = listPendingOtps(purpose).map(r => ({
-    phone: r.phone, code: r.code, requestedAt: r.created_at, expiresAt: r.expires_at
-  }));
-  return { status: 200, data: { purpose, requests: rows } };
-}
-
-export function confirmPhoneVerification(body) {
-  const { phone, code } = body || {};
-  if (!phone) return { status: 400, data: { error: 'Numéro requis' } };
-  if (!code) return { status: 400, data: { error: 'Code requis — recopiez le code reçu par WhatsApp pour confirmer' } };
-
-  const result = adminConfirmOtp(phone, 'verify_phone', code);
-  if (!result.ok) return { status: 400, data: { error: result.error } };
-
-  const user = db.prepare('SELECT id FROM users WHERE phone = ?').get(phone);
-  if (!user) return { status: 404, data: { error: 'Compte introuvable' } };
-
-  db.prepare('UPDATE users SET phone_verified = 1 WHERE id = ?').run(user.id);
-  return { status: 200, data: { message: 'Numéro confirmé — le compte est activé.' } };
-}
-
-// Depuis la refonte de juillet 2026 (même principe que confirmPhoneVerification), cette
-// fonction n'applique PLUS de mot de passe : la demande ne contient plus de mot de passe du
-// tout (voir forgotPassword() dans routes/auth.js), donc il n'y a rien à appliquer. Elle se
-// contente d'AUTORISER la demande — adminConfirmOtp() marque la ligne OTP "used", ce que
-// consumeConfirmedOtp() (voir otp.js) exige plus tard pour laisser le joueur/agent poser son
-// nouveau mot de passe via /auth/reset-password/complete. On renvoie aussi un lien wa.me
-// PRÊT À ENVOYER vers le numéro du joueur/agent (buildWhatsappLinkToPhone) : comme Konkou n'a
-// pas d'API WhatsApp Business, c'est à l'opérateur de taper sur ce lien pour prévenir la
-// personne depuis son propre WhatsApp qu'elle peut revenir dans l'app choisir son nouveau
-// mot de passe — voir renderVerificationsSection()/confirmVerification() dans admin.js.
-export function confirmPasswordReset(body) {
-  const { phone, code } = body || {};
-  if (!phone) return { status: 400, data: { error: 'Numéro requis' } };
-  if (!code) return { status: 400, data: { error: 'Code requis — recopiez le code reçu par WhatsApp pour confirmer' } };
-
-  const result = adminConfirmOtp(phone, 'reset_password', code);
-  if (!result.ok) return { status: 400, data: { error: result.error } };
-
-  const user = db.prepare('SELECT id FROM users WHERE phone = ?').get(phone);
-  if (!user) return { status: 404, data: { error: 'Compte introuvable' } };
-
-  const whatsappReplyLink = buildWhatsappLinkToPhone(
-    phone,
-    'Konkou — Votre demande de réinitialisation de mot de passe est autorisée. Ouvrez l’application Konkou et entrez votre nouveau mot de passe.'
-  );
-
-  // Best-effort, jamais bloquant ni fatal pour cette réponse (voir notifyUser() dans
-  // routes/push.js) : si ce joueur/agent avait déjà activé les notifications lors d'une
-  // session précédente, ceci lui envoie un vrai "ping" système même app fermée — en
-  // complément du lien WhatsApp ci-dessus, pas à sa place (Konkou n'a pas d'API WhatsApp
-  // Business pour l'envoyer automatiquement, voir buildWhatsappLinkToPhone dans otp.js).
-  notifyUser(user.id, {
-    title: 'Konkou — Réinitialisation autorisée',
-    body: 'Ouvrez l’app pour choisir votre nouveau mot de passe.',
-    url: '/'
-  }).catch(() => {});
-
-  return {
-    status: 200,
-    data: {
-      message: whatsappReplyLink
-        ? 'Demande autorisée — envoyez le message WhatsApp pré-rempli pour prévenir la personne.'
-        : "Demande autorisée — aucun numéro WhatsApp opérateur configuré, prévenez la personne par un autre moyen.",
-      whatsappReplyLink
-    }
-  };
-}
-
-export function rejectPhoneVerification(body) {
-  const { phone } = body || {};
-  if (!phone) return { status: 400, data: { error: 'Numéro requis' } };
-
-  const result = rejectOtp(phone, 'verify_phone');
-  if (!result.ok) return { status: 400, data: { error: result.error } };
-
-  return { status: 200, data: { message: "Demande rejetée — le compte reste non vérifié, l'utilisateur peut réessayer." } };
-}
-
-export function rejectPasswordReset(body) {
-  const { phone } = body || {};
-  if (!phone) return { status: 400, data: { error: 'Numéro requis' } };
-
-  const result = rejectOtp(phone, 'reset_password');
-  if (!result.ok) return { status: 400, data: { error: result.error } };
-
-  return { status: 200, data: { message: "Demande rejetée — le mot de passe n'a pas été modifié, l'utilisateur peut réessayer." } };
 }
 
 // ---------- Dépôts (parties bonus) ----------

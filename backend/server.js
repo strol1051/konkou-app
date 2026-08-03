@@ -205,7 +205,7 @@ const server = http.createServer(async (req, res) => {
 
     if (pathname === '/api/auth/register' && method === 'POST') {
       // Par IP seulement (pas de "cible" fixe avant création du compte) — limite le
-      // spam de comptes/OTP qui, sinon, inonderait la file "Vérifications" de l'admin.
+      // spam de comptes/OTP.
       if (tooManyRequests(req, res, 'register', { ipMax: 10, ipWindowMs: 60 * 60 * 1000 })) return;
       const { status, data } = await authRoutes.register(body);
       return sendJson(res, status, data);
@@ -240,23 +240,36 @@ const server = http.createServer(async (req, res) => {
       return sendJson(res, status, data);
     }
 
-    // Polled by the frontend while it waits for an admin to confirm the WhatsApp
-    // message — no auth header, the `code` query param is the secret instead.
-    if (pathname === '/api/auth/verify-status' && method === 'GET') {
-      const { status, data } = authRoutes.checkVerificationStatus({
-        phone: url.searchParams.get('phone'),
-        purpose: url.searchParams.get('purpose'),
-        code: url.searchParams.get('code')
-      });
+    // Depuis août 2026, la confirmation se fait directement dans l'app (voir le commentaire
+    // en tête de otp.js) : la personne retape le code affiché à l'écran, sans intervention
+    // admin — pas de header d'authentification, (phone, code) suffisent à prouver le droit
+    // de confirmer CETTE demande précise (même niveau de preuve que le reste des flux
+    // anonymes de ce projet). Même limite de débit que login : protège contre un
+    // devinage du code par force brute.
+    if (pathname === '/api/auth/confirm-verify-phone' && method === 'POST') {
+      if (tooManyRequests(req, res, 'confirm-verify-phone', {
+        ipMax: 20, ipWindowMs: 15 * 60 * 1000,
+        targetKey: body?.phone ? String(body.phone).trim() : null, targetMax: 8, targetWindowMs: 15 * 60 * 1000
+      })) return;
+      const { status, data } = authRoutes.confirmVerifyPhone(body);
+      return sendJson(res, status, data);
+    }
+
+    if (pathname === '/api/auth/confirm-reset-password' && method === 'POST') {
+      if (tooManyRequests(req, res, 'confirm-reset-password', {
+        ipMax: 20, ipWindowMs: 15 * 60 * 1000,
+        targetKey: body?.phone ? String(body.phone).trim() : null, targetMax: 8, targetWindowMs: 15 * 60 * 1000
+      })) return;
+      const { status, data } = authRoutes.confirmResetPassword(body);
       return sendJson(res, status, data);
     }
 
     // Dernière étape de la réinitialisation (voir completePasswordReset dans
-    // routes/auth.js) : appelé une fois qu'un admin a autorisé la demande dans
-    // "Vérifications" — pas de header d'authentification, le triplet (phone, purpose,
-    // code) déjà détenu par le frontend fait office de preuve, comme pour verify-status.
-    // Même limite de débit que forgot-password/resend-otp : un compte cible ne peut pas
-    // être bombardé de tentatives même si le triplet venait à être deviné.
+    // routes/auth.js) : appelé une fois que /api/auth/confirm-reset-password a confirmé le
+    // code — pas de header d'authentification, le triplet (phone, purpose, code) déjà
+    // détenu par le frontend fait office de preuve. Même limite de débit que
+    // forgot-password/resend-otp : un compte cible ne peut pas être bombardé de tentatives
+    // même si le triplet venait à être deviné.
     if (pathname === '/api/auth/reset-password/complete' && method === 'POST') {
       if (tooManyRequests(req, res, 'reset-password-complete', {
         ipMax: 10, ipWindowMs: 60 * 60 * 1000,
@@ -489,12 +502,14 @@ const server = http.createServer(async (req, res) => {
     }
 
     // ---------- Tchat interne (juillet 2026, voir routes/chat.js) ----------
-    // Remplace la confirmation par WhatsApp (inscription/réinitialisation) et le
-    // formulaire "Nous contacter" depuis le blocage du numéro opérateur par WhatsApp.
+    // À l'origine, remplaçait aussi la confirmation par WhatsApp de l'inscription/
+    // réinitialisation (retiré en août 2026, voir routes/chat.js — cette confirmation se
+    // fait désormais directement dans l'app, sans admin). Ne sert plus aujourd'hui qu'au
+    // formulaire "Nous contacter" (purpose='support', seul purpose encore utilisé).
 
     // Anonyme (avant connexion) — le triplet (phone, purpose, secret) fait office de
-    // preuve, comme /api/auth/verify-status. Limité par IP ET par numéro ciblé pour éviter
-    // qu'un tchat ouvert publiquement ne devienne un vecteur de spam à volume.
+    // preuve. Limité par IP ET par numéro ciblé pour éviter qu'un tchat ouvert
+    // publiquement ne devienne un vecteur de spam à volume.
     if (pathname === '/api/chat/anonymous/send' && method === 'POST') {
       if (tooManyRequests(req, res, 'chat-anonymous-send', {
         ipMax: 60, ipWindowMs: 60 * 60 * 1000,
@@ -674,36 +689,6 @@ const server = http.createServer(async (req, res) => {
     if (pathname === '/api/admin/cashouts/reject' && method === 'POST') {
       if (!requireAdmin(req, res)) return;
       const { status, data } = adminRoutes.rejectCashout(body);
-      return sendJson(res, status, data);
-    }
-
-    if (pathname === '/api/admin/verifications' && method === 'GET') {
-      if (!requireAdmin(req, res)) return;
-      const { status, data } = adminRoutes.listVerifications(url.searchParams.get('purpose'));
-      return sendJson(res, status, data);
-    }
-
-    if (pathname === '/api/admin/verifications/confirm-phone' && method === 'POST') {
-      if (!requireAdmin(req, res)) return;
-      const { status, data } = adminRoutes.confirmPhoneVerification(body);
-      return sendJson(res, status, data);
-    }
-
-    if (pathname === '/api/admin/verifications/confirm-reset' && method === 'POST') {
-      if (!requireAdmin(req, res)) return;
-      const { status, data } = adminRoutes.confirmPasswordReset(body);
-      return sendJson(res, status, data);
-    }
-
-    if (pathname === '/api/admin/verifications/reject-phone' && method === 'POST') {
-      if (!requireAdmin(req, res)) return;
-      const { status, data } = adminRoutes.rejectPhoneVerification(body);
-      return sendJson(res, status, data);
-    }
-
-    if (pathname === '/api/admin/verifications/reject-reset' && method === 'POST') {
-      if (!requireAdmin(req, res)) return;
-      const { status, data } = adminRoutes.rejectPasswordReset(body);
       return sendJson(res, status, data);
     }
 

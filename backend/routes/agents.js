@@ -244,12 +244,6 @@ export function applyAgent(userId, body) {
   };
 }
 
-function whatsappMessage(whatsappLink, successText, missingConfigText) {
-  return whatsappLink
-    ? successText
-    : `${missingConfigText} — aucun numéro WhatsApp n'est configuré côté serveur (OPERATOR_WHATSAPP_NUMBER), contactez l'administrateur.`;
-}
-
 function makeReferralCode(name) {
   const base = (name || 'agent').replace(/[^a-zA-Z]/g, '').slice(0, 4).toUpperCase() || 'AGNT';
   return base + crypto.randomBytes(3).toString('hex').toUpperCase();
@@ -340,11 +334,17 @@ export async function registerAgent(body) {
       reimb.natcashNumber, reimb.natcashName, reimb.moncashNumber, reimb.moncashName, reimb.reimbursementPeriodDays, existingAgent.id);
   }
 
-  const otp = await issueOtp(phone, 'verify_phone', 'Confirmez la création de mon compte agent Konkou.');
+  const otp = await issueOtp(phone, 'verify_phone');
   if (!otp.ok) {
     return { status: 429, data: { error: otp.error } };
   }
 
+  // Depuis août 2026, la confirmation se fait directement dans l'app (voir le commentaire
+  // en tête de otp.js et register() dans routes/auth.js) — pas d'intervention admin. La
+  // CANDIDATURE agent elle-même (agents.status, posée à 'pending' plus haut) N'EST PAS
+  // concernée par ce changement — elle attend toujours une vraie revue admin (pièce
+  // d'identité, dépôt de capital) dans l'onglet "Agents" du panneau admin, un processus
+  // entièrement séparé de la simple confirmation du numéro.
   return {
     status: 200,
     data: {
@@ -352,8 +352,7 @@ export async function registerAgent(body) {
       phone,
       purpose: 'verify_phone',
       code: otp.code,
-      whatsappLink: otp.whatsappLink,
-      message: whatsappMessage(otp.whatsappLink, 'Candidature agent enregistrée. Confirmez via WhatsApp pour l’activer.', 'Candidature enregistrée')
+      message: 'Candidature enregistrée — entrez le code ci-dessous pour activer votre compte.'
     }
   };
 }

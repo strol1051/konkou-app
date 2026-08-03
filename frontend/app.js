@@ -495,10 +495,10 @@ const state = {
   user: JSON.parse(localStorage.getItem('konkou_user') || 'null'),
   view: 'home',
   authMode: 'login', // login | register | awaiting-confirm | forgot-request | reset-new-password
-  // Détails de la demande en attente de confirmation WhatsApp par un admin :
-  // { phone, purpose ('verify_phone'|'reset_password'), code, whatsappLink }
+  // Détails de la demande d'inscription/réinitialisation en attente de confirmation du
+  // code (depuis août 2026, confirmée directement dans l'app — voir renderAwaitingConfirm()) :
+  // { phone, purpose ('verify_phone'|'reset_password'), code }
   awaiting: null,
-  awaitingStatus: null, // null | 'pending' | 'expired' | 'invalid'
   error: '',
   success: '',
   loading: false,
@@ -563,54 +563,13 @@ function setState(patch) {
   render();
 }
 
-// ---------- POLLING (confirmation WhatsApp par un admin) ----------
-let pollTimer = null;
-
-function stopPolling() {
-  if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
-}
-
-function startPolling() {
-  stopPolling();
-  pollTimer = setInterval(async () => {
-    const { phone, purpose, code } = state.awaiting || {};
-    if (!phone || !purpose || !code) return stopPolling();
-    try {
-      const params = new URLSearchParams({ phone, purpose, code });
-      const res = await fetch(`/api/auth/verify-status?${params}`);
-      const data = await res.json();
-      if (data.status === 'confirmed') {
-        stopPolling();
-        stopChatPolling();
-        if (purpose === 'reset_password') {
-          // Pas de token à ce stade — un admin vient seulement d'AUTORISER la demande
-          // (voir confirmPasswordReset dans routes/admin.js), le mot de passe n'a pas
-          // encore été choisi. On bascule vers le formulaire dédié plutôt que de se
-          // connecter directement ; state.awaiting (phone/code) reste intact puisqu'on
-          // ne passe pas par completeLogin() ici (voir renderSetNewPassword ci-dessus).
-          setState({ authMode: 'reset-new-password', error: '', success: '' });
-        } else {
-          await completeLogin(data.token, data.user);
-        }
-      } else if (data.status === 'expired' || data.status === 'invalid') {
-        stopPolling();
-        setState({ awaitingStatus: data.status });
-      }
-      // 'pending' -> keep waiting, no re-render needed to avoid flicker
-    } catch {
-      // network hiccup — just try again on the next tick
-    }
-  }, 3000);
-}
-
 // ---------- TCHAT INTERNE (juillet 2026, voir routes/chat.js) ----------
-// Remplace la confirmation par WhatsApp (écran "Confirmez votre inscription/la
-// réinitialisation") après le blocage du numéro opérateur — voir renderAwaitingConfirm()
-// plus bas. Sondage séparé du pollTimer ci-dessus (qui, lui, ne fait que détecter
-// 'confirmed'/'expired'/'invalid' pour changer d'écran) : celui-ci récupère les NOUVEAUX
-// messages et les ajoute directement au DOM sans passer par setState()/render(), pour ne
-// jamais effacer un brouillon en cours de frappe dans le champ de message (même principe
-// déjà appliqué au commentaire "pending -> keep waiting" juste au-dessus).
+// Sert aujourd'hui uniquement "Nous contacter" (le tchat de confirmation d'inscription/
+// réinitialisation a été retiré en août 2026 — voir renderAwaitingConfirm() plus bas, qui
+// utilise désormais un simple champ de code confirmé directement, sans admin ni sondage).
+// Récupère les NOUVEAUX messages et les ajoute directement au DOM sans passer par
+// setState()/render(), pour ne jamais effacer un brouillon en cours de frappe dans le champ
+// de message.
 let chatPollTimer = null;
 let chatLastMessageId = 0;
 let chatTick = null;
@@ -623,11 +582,9 @@ function stopChatPolling() {
 // `fetchMessages` est une fonction async ré-appelée à CHAQUE tick (jamais figée une seule
 // fois à l'appel) — elle doit renvoyer soit un tableau de messages, soit `null` pour
 // signaler que l'écran concerné n'est plus affiché (ce qui arrête proprement le sondage).
-// Généralisé (juillet 2026) pour servir aussi bien la conversation anonyme de confirmation
-// (voir awaitingChatMessages() ci-dessous) que celle de "Nous contacter" (anonyme OU
-// authentifiée selon state.token, voir contactChatMessages()/startContactChatPolling()) —
-// un seul mécanisme de sondage/anti-doublon (chatLastMessageId) partagé, puisqu'un seul de
-// ces écrans peut être affiché à la fois.
+// Généralisée (juillet 2026) pour accepter n'importe quelle source de messages plutôt qu'un
+// triplet (phone, purpose, secret) figé — sert aujourd'hui "Nous contacter"
+// (contactChatMessages()) et le tchat Joueur<->Agent (agentPlayerChatMessages()).
 function startChatPolling(fetchMessages) {
   stopChatPolling();
   chatLastMessageId = 0;
@@ -642,19 +599,6 @@ function startChatPolling(fetchMessages) {
   };
   chatTick();
   chatPollTimer = setInterval(chatTick, 3000);
-}
-
-// Source de messages pour la conversation anonyme de confirmation (inscription/
-// réinitialisation) — voir goAwaitingConfirm() plus bas. Revient à `null` dès que l'écran
-// n'est plus le bon, ou que la demande a expiré/n'est plus valide (state.awaitingStatus).
-async function awaitingChatMessages() {
-  if (state.authMode !== 'awaiting-confirm' || !state.awaiting) return null;
-  if (state.awaitingStatus === 'expired' || state.awaitingStatus === 'invalid') return null;
-  const { phone, purpose, code } = state.awaiting;
-  const q = new URLSearchParams({ phone, purpose, secret: code || '' });
-  const res = await fetch(`/api/chat/anonymous/messages?${q}`);
-  const data = await res.json().catch(() => ({}));
-  return res.ok ? (data.messages || []) : [];
 }
 
 // Ajoute directement les nouveaux messages (ceux dont l'id dépasse le dernier connu) au
@@ -751,11 +695,10 @@ async function completeLogin(token, user) {
     agentScreen: 'main',
     authMode: 'login',
     awaiting: null,
-    awaitingStatus: null,
     error: '',
     success: ''
   });
-  // Le login (/auth/login) et la confirmation WhatsApp (/auth/verify-status) ne renvoient
+  // Le login (/auth/login) et la confirmation d'inscription/réinitialisation ne renvoient
   // qu'un user "minimal" (sans dailyChallenge, voir publicUser() dans routes/auth.js) —
   // sans cet appel, la carte "Défi du jour" de l'accueil resterait bloquée sur son état de
   // chargement (voir renderHome) jusqu'à une action qui rafraîchit le profil par ailleurs
@@ -1160,10 +1103,11 @@ function bindAgentChatEvents() {
 
 // Depuis la refonte de juillet 2026, cette demande ne contient plus de nouveau mot de
 // passe (voir forgotPassword() dans routes/auth.js) — même principe que l'inscription :
-// on demande d'abord, un admin autorise ensuite dans "Vérifications", et c'est SEULEMENT
-// après cette autorisation que le joueur/agent choisit son nouveau mot de passe (voir
-// renderSetNewPassword() plus bas). L'ancien champ "nouveau mot de passe" ici — saisi
-// avant toute vérification d'identité — a été retiré pour cette raison.
+// on demande d'abord, le code est confirmé ensuite (depuis août 2026, directement dans
+// l'app — voir renderAwaitingConfirm()), et c'est SEULEMENT après cette confirmation que le
+// joueur/agent choisit son nouveau mot de passe (voir renderSetNewPassword() plus bas).
+// L'ancien champ "nouveau mot de passe" ici — saisi avant toute vérification d'identité —
+// a été retiré pour cette raison.
 //
 // Correctif (juillet 2026) : ce champ utilise désormais phoneField() (préfixe "+509"
 // automatique, comme la connexion/l'inscription/l'inscription agent) au lieu d'un simple
@@ -1178,7 +1122,7 @@ function renderForgotRequest() {
   return `
     <div class="card">
       <h2>Mot de passe oublié</h2>
-      <p>Entrez votre numéro. Un administrateur autorisera votre demande via une conversation intégrée à l'application, puis vous pourrez choisir votre nouveau mot de passe directement ici.</p>
+      <p>Entrez votre numéro. Vous recevrez un code à confirmer directement ici, puis vous pourrez choisir votre nouveau mot de passe.</p>
       <form id="forgot-request-form">
         ${phoneField('phone')}
         <button class="primary" type="submit">Continuer</button>
@@ -1188,11 +1132,10 @@ function renderForgotRequest() {
   `;
 }
 
-// Étape finale de la réinitialisation, affichée seulement après qu'un admin a autorisé la
-// demande (voir startPolling(), qui bascule authMode ici dès que /auth/verify-status
-// renvoie 'confirmed' pour purpose === 'reset_password'). state.awaiting.phone/code sont
-// ceux reçus à la demande initiale (voir bindForgotRequestEvents) — c'est ce même
-// triplet (phone, purpose, code) qui prouve l'autorisation côté serveur (voir
+// Étape finale de la réinitialisation, affichée seulement après confirmation du code (voir
+// bindAwaitingConfirmEvents(), qui bascule authMode ici dès que /auth/confirm-reset-password
+// répond avec succès). state.awaiting.phone/code sont ceux confirmés à l'étape précédente —
+// c'est ce même triplet (phone, purpose, code) qui prouve la confirmation côté serveur (voir
 // consumeConfirmedOtp dans otp.js), sans qu'il soit nécessaire d'être déjà connecté.
 function renderSetNewPassword() {
   const a = state.awaiting || {};
@@ -1209,30 +1152,16 @@ function renderSetNewPassword() {
   `;
 }
 
+// Depuis août 2026, la confirmation se fait directement dans l'app, sans intervention admin
+// (voir le commentaire en tête de otp.js côté serveur) : le code est affiché ici comme avant
+// (aucun autre canal ne peut le transmettre, faute de fournisseur SMS branché — voir sms.js),
+// mais c'est maintenant la personne elle-même qui le retape pour confirmer, validé
+// immédiatement côté serveur (confirmVerifyPhone()/confirmResetPassword() dans
+// routes/auth.js) — plus de tchat ni d'attente.
 function renderAwaitingConfirm() {
   const a = state.awaiting || {};
   const isReset = a.purpose === 'reset_password';
   const title = isReset ? 'Confirmez la réinitialisation' : 'Confirmez votre inscription';
-
-  if (state.awaitingStatus === 'expired') {
-    return `
-      <div class="card">
-        <h2>${title}</h2>
-        <p>Cette demande a expiré avant confirmation.</p>
-        <button class="link-btn" id="resend-link">Relancer une demande</button>
-        <button class="link-btn" id="back-to-login" style="margin-top:10px; display:block;">Retour à la connexion</button>
-      </div>
-    `;
-  }
-  if (state.awaitingStatus === 'invalid') {
-    return `
-      <div class="card">
-        <h2>${title}</h2>
-        <p>Cette demande n'est plus valide.</p>
-        <button class="link-btn" id="back-to-login">Retour à la connexion</button>
-      </div>
-    `;
-  }
 
   return `
     <div class="card">
@@ -1240,17 +1169,12 @@ function renderAwaitingConfirm() {
       <p>Numéro : <strong>${escapeHtml(a.phone || '')}</strong></p>
       <p style="font-size:13px;">Votre code de confirmation :</p>
       <p style="font-size:28px; font-weight:800; letter-spacing:4px; text-align:center;">${escapeHtml(a.code || '')}</p>
-      <p style="font-size:13px;">Indiquez ce code à l'administrateur dans le champ de message tout en bas de cette carte pour confirmer votre identité — ${isReset
-        ? "vous pourrez ensuite choisir votre nouveau mot de passe directement dans l'application."
-        : 'votre compte sera activé automatiquement dès la confirmation.'}</p>
-      <div id="chat-thread" class="chat-thread"><p class="chat-empty">Aucun message pour l'instant.</p></div>
-      <p style="font-size:12px; color:var(--muted); margin:0 0 4px;">✍️ Écrire un message :</p>
-      <form id="chat-send-form" class="chat-send-form">
-        <textarea name="body" placeholder="Ex : Bonjour, mon code est ${escapeHtml(a.code || '123456')}" maxlength="1000" rows="2" autofocus required></textarea>
-        <button class="primary" type="submit">Envoyer</button>
+      <p style="font-size:13px;">Entrez ce code ci-dessous pour ${isReset ? "continuer — vous pourrez ensuite choisir votre nouveau mot de passe" : 'activer votre compte'}.</p>
+      <form id="confirm-code-form">
+        <input name="code" inputmode="numeric" pattern="[0-9]{6}" maxlength="6" placeholder="Code à 6 chiffres" required autofocus style="text-align:center; letter-spacing:4px; font-weight:700; font-size:20px;" />
+        <button class="primary" type="submit">Confirmer</button>
       </form>
-      <p class="center-msg" style="padding:14px 0;">⏳ En attente de confirmation…</p>
-      <button class="link-btn" id="resend-link">Je n'ai pas reçu de réponse — relancer une demande</button>
+      <button class="link-btn" id="resend-link" style="margin-top:14px; display:block;">Je n'ai pas mon code — relancer une demande</button>
       <button class="link-btn" id="back-to-login" style="margin-top:10px; display:block;">Retour à la connexion</button>
     </div>
   `;
@@ -1314,22 +1238,16 @@ function bindAuthEvents() {
 function goAwaitingConfirm(data) {
   setState({
     authMode: 'awaiting-confirm',
-    awaiting: { phone: data.phone, purpose: data.purpose, code: data.code, whatsappLink: data.whatsappLink },
-    awaitingStatus: null,
+    awaiting: { phone: data.phone, purpose: data.purpose, code: data.code },
     error: '',
     success: ''
   });
-  startPolling();
-  // Le code (state.awaiting.code) sert AUSSI de secret pour le tchat — voir
-  // checkAnonymousAccess() dans routes/chat.js : même triplet (phone, purpose, code) déjà
-  // utilisé par /auth/verify-status, aucun secret séparé à transporter.
-  startChatPolling(awaitingChatMessages);
 }
 
 async function resendCode(purpose, phone) {
   try {
     const data = await api('/auth/resend-otp', { method: 'POST', body: { phone, purpose } });
-    goAwaitingConfirm({ phone, purpose, code: data.code, whatsappLink: data.whatsappLink, message: data.message });
+    goAwaitingConfirm({ phone, purpose, code: data.code, message: data.message });
   } catch (err) {
     setState({ error: err.message });
   }
@@ -1341,37 +1259,30 @@ function bindAwaitingConfirmEvents() {
     resendCode(a.purpose, a.phone);
   });
   document.getElementById('back-to-login').addEventListener('click', () => {
-    stopPolling();
-    stopChatPolling();
-    setState({ authMode: 'login', awaiting: null, awaitingStatus: null, error: '', success: '' });
+    setState({ authMode: 'login', awaiting: null, error: '', success: '' });
   });
 
-  const sendForm = document.getElementById('chat-send-form');
-  if (sendForm) {
-    sendForm.addEventListener('submit', async (e) => {
-      e.preventDefault();
-      const text = new FormData(e.target).get('body');
-      const a = state.awaiting || {};
-      try {
-        const res = await fetch('/api/chat/anonymous/send', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ phone: a.phone, purpose: a.purpose, secret: a.code, body: text })
-        });
-        const data = await res.json().catch(() => ({}));
-        if (!res.ok) throw new Error(data.error || 'Erreur inconnue');
-        e.target.reset();
-        // Redéclenche immédiatement un sondage plutôt que d'afficher le message envoyé de
-        // façon optimiste (avec un id inventé) — évite tout risque de doublon quand le
-        // vrai message arrive au tick suivant (voir appendNewChatMessages()), pour un coût
-        // quasi nul puisque le serveur a déjà bien enregistré le message au moment où
-        // cette réponse revient.
-        if (chatTick) chatTick();
-      } catch (err) {
-        setState({ error: err.message });
+  document.getElementById('confirm-code-form').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const code = new FormData(e.target).get('code');
+    const a = state.awaiting || {};
+    try {
+      if (a.purpose === 'reset_password') {
+        await api('/auth/confirm-reset-password', { method: 'POST', body: { phone: a.phone, code } });
+        // Pas de jeton à ce stade — le code confirme seulement la demande, le mot de passe
+        // n'a pas encore été choisi. On garde `code` (celui réellement confirmé côté
+        // serveur, pas nécessairement celui affiché si la personne l'a retapé après un
+        // "relancer une demande") dans state.awaiting pour la toute dernière étape (voir
+        // renderSetNewPassword()/bindSetNewPasswordEvents() plus bas).
+        setState({ authMode: 'reset-new-password', awaiting: { ...a, code }, error: '', success: '' });
+      } else {
+        const data = await api('/auth/confirm-verify-phone', { method: 'POST', body: { phone: a.phone, code } });
+        await completeLogin(data.token, data.user);
       }
-    });
-  }
+    } catch (err) {
+      setState({ error: err.message });
+    }
+  });
 }
 
 function bindForgotRequestEvents() {
@@ -1388,7 +1299,7 @@ function bindForgotRequestEvents() {
     try {
       const data = await api('/auth/forgot-password', { method: 'POST', body: fd });
       if (data.code) {
-        goAwaitingConfirm({ phone: fd.phone, purpose: 'reset_password', code: data.code, whatsappLink: data.whatsappLink, message: data.message });
+        goAwaitingConfirm({ phone: fd.phone, purpose: 'reset_password', code: data.code, message: data.message });
       } else {
         setState({ authMode: 'login', error: '', success: data.message });
       }
@@ -1399,14 +1310,14 @@ function bindForgotRequestEvents() {
 }
 
 // Dernière étape : envoie le nouveau mot de passe choisi, accompagné du triplet
-// (phone, purpose, code) conservé dans state.awaiting depuis la demande initiale — c'est
-// ce triplet qui prouve côté serveur qu'un admin a bien autorisé CETTE demande précise
-// (voir completePasswordReset dans routes/auth.js). En cas de succès, l'utilisateur est
-// connecté directement (comme pour une inscription confirmée), sans repasser par l'écran
-// de connexion.
+// (phone, purpose, code) conservé dans state.awaiting depuis l'étape de confirmation
+// précédente — c'est ce triplet qui prouve côté serveur que le code a bien été confirmé
+// pour CETTE demande précise (voir completePasswordReset dans routes/auth.js). En cas de
+// succès, l'utilisateur est connecté directement (comme pour une inscription confirmée),
+// sans repasser par l'écran de connexion.
 function bindSetNewPasswordEvents() {
   document.getElementById('back-to-login').addEventListener('click', () => {
-    setState({ authMode: 'login', awaiting: null, awaitingStatus: null, error: '', success: '' });
+    setState({ authMode: 'login', awaiting: null, error: '', success: '' });
   });
   document.getElementById('set-new-password-form').addEventListener('submit', async (e) => {
     e.preventDefault();

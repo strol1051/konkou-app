@@ -1,20 +1,19 @@
 import crypto from 'node:crypto';
 import db from '../db.js';
-import { otpRequestExists } from '../otp.js';
 import { notifyAdmins, notifyUser } from './push.js';
 
 // Tchat interne Admin <-> joueur/agent (juillet 2026) — voir le commentaire sur la table
-// chat_messages dans db.js pour le contexte complet (remplace la confirmation par
-// WhatsApp après le blocage du numéro opérateur). Trois "purpose" possibles :
-// - 'verify_phone'   : remplace l'envoi du code par WhatsApp à l'inscription.
-// - 'reset_password' : remplace l'envoi du code par WhatsApp à la réinitialisation.
-// - 'support'        : ex-formulaire "Nous contacter" + support en continu pour un
-//                       joueur/agent déjà connecté (voir sendAuthedMessage/getAuthedMessages).
-// La logique de confirmation elle-même (adminConfirmOtp, phone_verified, etc. — voir
-// routes/admin.js) n'est PAS touchée par ce fichier : le tchat ne fait que remplacer le
-// CANAL par lequel la personne communique son code à l'admin, pas la vérification.
-
-const PURPOSES = ['verify_phone', 'reset_password', 'support'];
+// chat_messages dans db.js pour le contexte complet (remplace la confirmation par WhatsApp
+// après le blocage du numéro opérateur pour spam). Un seul "purpose" reste utilisé depuis
+// août 2026 : 'support' (ex-formulaire "Nous contacter" + support en continu pour un
+// joueur/agent déjà connecté, voir sendAuthedMessage/getAuthedMessages). Les purposes
+// 'verify_phone'/'reset_password' (confirmation d'inscription/réinitialisation) ont été
+// retirés : cette confirmation se fait désormais directement dans l'app, sans intervention
+// admin (voir confirmVerifyPhone()/confirmResetPassword() dans routes/auth.js et le
+// commentaire en tête de otp.js) — il n'y a donc plus rien à discuter avec un admin à ce
+// sujet. D'anciennes lignes chat_messages avec ces purposes peuvent encore exister en base
+// (historique), mais ne sont plus jamais créées ni lues par aucune route.
+const PURPOSES = ['support'];
 const MESSAGE_MAX_LEN = 1000;
 const DISPLAY_NAME_MAX_LEN = 80;
 
@@ -30,28 +29,18 @@ function notifyUserSilently(userId, payloadObj) {
   notifyUser(userId, payloadObj).catch(() => {});
 }
 
-// Preuve d'accès à une conversation AVANT toute connexion (pas de jeton de session) :
-// - verify_phone/reset_password : le secret est le code OTP déjà connu du frontend depuis
-//   la réponse initiale de /auth/register ou /auth/forgot-password (voir otpRequestExists
-//   dans otp.js — même triplet déjà utilisé ailleurs comme "jeton" dans ce projet).
-// - support : le secret est un jeton aléatoire propre à la conversation, généré au tout
-//   premier message (voir sendAnonymousMessage ci-dessous) — il faut donc qu'AU MOINS un
-//   message existe déjà avec ce (phone, secret) pour que l'accès soit valide.
-// Ne vérifie jamais la propriété du numéro au-delà de ça — exactement le même niveau de
-// preuve que le reste de ce projet pour les flux anonymes (voir /auth/verify-status).
+// Preuve d'accès à une conversation AVANT toute connexion (pas de jeton de session) : un
+// jeton aléatoire propre à la conversation, généré au tout premier message (voir
+// sendAnonymousMessage ci-dessous) — il faut donc qu'AU MOINS un message existe déjà avec ce
+// (phone, secret) pour que l'accès soit valide. Ne vérifie jamais la propriété du numéro
+// au-delà de ça — même niveau de preuve que le reste de ce projet pour les flux anonymes.
 function checkAnonymousAccess(phone, purpose, secret) {
   if (!phone || !PURPOSES.includes(purpose)) return { ok: false, error: 'Requête invalide' };
-  if (purpose === 'support') {
-    if (!secret) return { ok: false, error: 'Jeton de conversation requis' };
-    const exists = db.prepare(
-      `SELECT 1 FROM chat_messages WHERE phone = ? AND purpose = 'support' AND secret = ? LIMIT 1`
-    ).get(phone, secret);
-    return exists ? { ok: true } : { ok: false, error: 'Conversation introuvable — rechargez la page pour recommencer.' };
-  }
-  if (!secret || !otpRequestExists(phone, purpose, secret)) {
-    return { ok: false, error: 'Requête invalide ou expirée — relancez une demande.' };
-  }
-  return { ok: true };
+  if (!secret) return { ok: false, error: 'Jeton de conversation requis' };
+  const exists = db.prepare(
+    `SELECT 1 FROM chat_messages WHERE phone = ? AND purpose = 'support' AND secret = ? LIMIT 1`
+  ).get(phone, secret);
+  return exists ? { ok: true } : { ok: false, error: 'Conversation introuvable — rechargez la page pour recommencer.' };
 }
 
 function validateMessageBody(text) {
@@ -63,10 +52,8 @@ function validateMessageBody(text) {
 
 // ---------- Anonyme (avant connexion) ----------
 
-// Envoie un message pour une conversation anonyme. Pour verify_phone/reset_password, le
-// secret DOIT déjà exister (voir checkAnonymousAccess) — ces conversations ne peuvent
-// démarrer que depuis une vraie demande d'inscription/réinitialisation (otp.js). Pour
-// 'support', un secret absent démarre une TOUTE NOUVELLE conversation (jeton généré ici,
+// Envoie un message pour une conversation anonyme ('support' uniquement, voir PURPOSES
+// ci-dessus). Un secret absent démarre une TOUTE NOUVELLE conversation (jeton généré ici,
 // renvoyé au frontend pour les messages/lectures suivants) — c'est la seule façon de créer
 // un nouveau fil, on ne peut jamais "choisir" son propre secret depuis le client.
 export function sendAnonymousMessage(body) {
@@ -79,18 +66,12 @@ export function sendAnonymousMessage(body) {
   if (bodyError) return { status: 400, data: { error: bodyError } };
 
   let effectiveSecret;
-  if (purpose === 'support') {
-    if (secret) {
-      const check = checkAnonymousAccess(phone, purpose, secret);
-      if (!check.ok) return { status: 400, data: { error: check.error } };
-      effectiveSecret = secret;
-    } else {
-      effectiveSecret = crypto.randomBytes(8).toString('hex');
-    }
-  } else {
+  if (secret) {
     const check = checkAnonymousAccess(phone, purpose, secret);
     if (!check.ok) return { status: 400, data: { error: check.error } };
     effectiveSecret = secret;
+  } else {
+    effectiveSecret = crypto.randomBytes(8).toString('hex');
   }
 
   const name = displayName ? String(displayName).trim().slice(0, DISPLAY_NAME_MAX_LEN) : null;
@@ -171,10 +152,8 @@ export function getAuthedMessages(userId) {
 // ---------- Admin ----------
 
 // Liste groupée par (phone, purpose) — une "conversation" au sens de l'admin, quel que
-// soit le nombre de messages échangés. Utilisée par l'onglet "Messages" (purpose='support'
-// uniquement) ; les conversations verify_phone/reset_password restent affichées directement
-// dans l'onglet "Vérifications" existant (voir loadVerificationChats() dans admin.js), pas
-// ici, pour ne pas dupliquer deux vues sur les mêmes données.
+// soit le nombre de messages échangés. Utilisée par l'onglet "Messages" (purpose='support',
+// seul purpose encore utilisé — voir PURPOSES en tête de fichier).
 export function listChatThreads(purposeFilter) {
   const purpose = PURPOSES.includes(purposeFilter) ? purposeFilter : 'support';
   const rows = db.prepare(`
@@ -218,11 +197,10 @@ export function adminReply(body) {
     `INSERT INTO chat_messages (purpose, phone, sender, body, read_by_admin) VALUES (?, ?, 'admin', ?, 1)`
   ).run(purpose, phone, messageBody);
 
-  // Best-effort : si cette personne a déjà un compte (verify_phone crée toujours la ligne
-  // users dès l'inscription, même non vérifiée — voir register() dans routes/auth.js) ET a
-  // déjà activé les notifications sur un appareil, elle reçoit un vrai "ping" système en
-  // plus du tchat lui-même. Silencieusement ignoré si aucun compte ne correspond (ex: un
-  // message "support" envoyé depuis le formulaire "Nous contacter" par quelqu'un sans compte).
+  // Best-effort : si cette personne a déjà un compte ET a déjà activé les notifications sur
+  // un appareil, elle reçoit un vrai "ping" système en plus du tchat lui-même. Silencieusement
+  // ignoré si aucun compte ne correspond (ex: un message envoyé depuis le formulaire "Nous
+  // contacter" par quelqu'un sans compte).
   const user = db.prepare('SELECT id FROM users WHERE phone = ?').get(phone);
   if (user) {
     notifyUserSilently(user.id, {
